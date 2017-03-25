@@ -7,10 +7,12 @@ import Control.Lens
 data Card =
   NumberCard Int
   | BuffCard Location Int
+  | NullCard
   deriving (Show, Eq)
 
 buff f (NumberCard x) = NumberCard (f x)
 buff _ c@BuffCard{} = c
+buff _ c@NullCard = c
 
 data Location = Board | Hand | Deck deriving (Show, Eq)
 
@@ -33,6 +35,8 @@ instance Show PlayerState where
 
 makeLenses ''PlayerState
 
+mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard}
+
 locAsLens Board = board
 locAsLens Hand = hand
 locAsLens Deck = hand
@@ -53,6 +57,7 @@ playCard pt c@NumberCard{} gameState =
   gameState & (playerState . element pt . board . element 0) .~ c
 playCard pt (BuffCard loc amount) gameState =
   gameState & (playerState . element pt . locAsLens loc . traverse) %~ buff (+ amount)
+playCard _ NullCard gameState = gameState
 
 drawCard :: PlayerState -> PlayerState
 drawCard ps@PlayerState {_deck = [], _hand = _} = ps
@@ -86,6 +91,15 @@ advancePlayerTurn bound current =
 advanceGame :: TurnBound -> GameState -> GameState
 advanceGame bound gameState = nextGameState & playerTurn %~ advancePlayerTurn bound where
   nextGameState = executeTurn (_playerTurn gameState) gameState
+
+deck1 = BuffCard Board 1 : NumberCard 1 : deck1
+
+player1 = mkPlayer deck1
+player2 = mkPlayer deck1
+
+gs = GameState {_playerState = [player1, player2], _playerTurn = 0}
+
+turns = iterate (advanceGame 1) gs
 
 main :: IO ()
 main = do
