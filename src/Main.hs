@@ -23,7 +23,13 @@ data PlayerState = PlayerState
   , _deck :: Deck
   , _board :: Board
   }
-  deriving (Show, Eq)
+  deriving (Eq)
+
+instance Show PlayerState where
+  show PlayerState {_hand = h, _deck = [], _board = b} =
+    "PlayerState {hand: " ++ show h ++ ", deck <empty>, board: " ++ show b ++ "}"
+  show PlayerState {_hand = h, _deck = (c:_), _board = b} =
+    "PlayerState {hand: " ++ show h ++ ", deck (next card): " ++ show c ++ ", board: " ++ show b ++ "}"
 
 makeLenses ''PlayerState
 
