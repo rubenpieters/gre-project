@@ -55,10 +55,21 @@ type TurnBound = Int
 
 playCard :: PlayerTurn -> Card -> GameState -> GameState
 playCard pt c@NumberCard{} gameState =
-  gameState & (playerState . element pt . board . element 0) .~ c
+  gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c where
+  playerBoard = gameState ^. (playerState . element pt . board)
+  --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
 playCard pt (BuffCard loc amount) gameState =
   gameState & (playerState . element pt . locAsLens loc . traverse) %~ buff (+ amount)
 playCard _ NullCard gameState = gameState
+
+-- boards are technically not supposed to be empty
+-- but it still gives us index `0` if we would pass it an empty list as board
+lowestCardIndex b = go b NullCard 0 0 where
+  go [] _ accI _ = accI
+  go (c:b') NullCard accI currI = go b' c accI (currI + 1)
+  go (c@(NullCard):b') _ _ currI = go b' c currI (currI + 1)
+  go (c@(NumberCard x):b') (NumberCard y) _ currI | x < y = go b' c currI (currI + 1)
+  go (_:b') acc accI currI = go b' acc accI (currI + 1)
 
 drawCard :: PlayerState -> PlayerState
 drawCard ps@PlayerState {_deck = [], _hand = _} = ps
@@ -107,7 +118,8 @@ advanceGame bound gameState = if any _winner (_playerState gameState)
   afterAdvanceTurn = nextGameState & playerTurn %~ advancePlayerTurn bound
   afterCheckWinner = afterAdvanceTurn & (playerState . traverse) %~ checkWinCon
 
-deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
+--deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
+deck1 = NumberCard 0 : BuffCard Board 5 : deck1
 
 player1 = mkPlayer deck1
 player2 = mkPlayer deck1
