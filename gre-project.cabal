@@ -20,3 +20,5 @@ executable gre-project
   build-depends:       base >= 4.7 && < 5
                      , mtl
                      , lens
+                     , random-shuffle
+                     , MonadRandom

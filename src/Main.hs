@@ -4,6 +4,9 @@
 
 import Control.Lens
 
+import System.Random.Shuffle
+import Control.Monad.Random
+
 data Card =
   NumberCard Int
   | BuffCard Location Int
@@ -45,6 +48,7 @@ locAsLens Deck = hand
 data GameState = GameState
   { _playerState :: [PlayerState]
   , _playerTurn :: Int
+  , _turnCount :: Int
   }
   deriving (Show)
 
@@ -116,17 +120,45 @@ advanceGame bound gameState = if any _winner (_playerState gameState)
   where
   nextGameState = executeTurn (_playerTurn gameState) gameState
   afterAdvanceTurn = nextGameState & playerTurn %~ advancePlayerTurn bound
-  afterCheckWinner = afterAdvanceTurn & (playerState . traverse) %~ checkWinCon
+  afterAdvanceTurnCount = afterAdvanceTurn & turnCount %~ (+) 1
+  afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
 
 --deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
 deck1 = NumberCard 0 : BuffCard Board 5 : deck1
+deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board 5))
+
+randomPermutations :: MonadRandom m => [a] -> m [a]
+randomPermutations l = do
+  x <- shuffleM l
+  y <- randomPermutations l
+  return (x ++ y)
 
 player1 = mkPlayer deck1
 player2 = mkPlayer deck1
 
-testGame = GameState {_playerState = [player1, player2], _playerTurn = 0}
+testGame = GameState {_playerState = [player1, player2], _playerTurn = 0, _turnCount = 0}
+
+testGame2 :: MonadRandom m => m (Int, [Bool])
+testGame2 = do
+  deckP1 <- shuffleM deck2
+  deckP2 <- shuffleM deck2
+  let states = playFunc deckP1 deckP2
+  let lastState = last states
+  let nextState = advanceGame 1 lastState
+  return (nextState ^. turnCount, map _winner (nextState ^. playerState))
 
 turns = iterate (advanceGame 1) testGame
+
+playUntilWinner = takeWhile (\gs -> all (not . _winner) (gs ^. playerState )) turns
+
+playFunc :: [Card] -> [Card] -> [GameState]
+playFunc d1 d2 = takeWhile playCond allStates where
+  pl1 = mkPlayer d1
+  pl2 = mkPlayer d2
+  allStates = iterate (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
+
+playCond :: GameState -> Bool
+playCond gs = all (not . _winner) (gs ^. playerState) && (gs ^. turnCount) < 1000
 
 main :: IO ()
 main = do
