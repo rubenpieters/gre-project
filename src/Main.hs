@@ -1,4 +1,5 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 --module Main where
 
@@ -7,17 +8,21 @@ import Control.Lens
 import System.Random.Shuffle
 import Control.Monad.Random
 
+data Location = Board | Hand | Deck deriving (Show, Eq)
+
+data Target = All | Friendly | Enemy deriving (Show, Eq)
+
+data CardModType = Add Int | Min Int | Mod Int deriving (Show, Eq)
+
 data Card =
   NumberCard Int
-  | BuffCard Location Int
+  | BuffCard Location Target CardModType
   | NullCard
   deriving (Show, Eq)
 
 buff f (NumberCard x) = NumberCard (f x)
 buff _ c@BuffCard{} = c
 buff _ c@NullCard = c
-
-data Location = Board | Hand | Deck deriving (Show, Eq)
 
 type Board = [Card]
 type Hand = [Card]
@@ -41,9 +46,18 @@ makeLenses ''PlayerState
 
 mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard, _winner = False}
 
+
 locAsLens Board = board
 locAsLens Hand = hand
 locAsLens Deck = hand
+
+--tgtAsLens All = traverse
+tgtAsLens pt Friendly = element pt
+tgtAsLens pt Enemy = element (1 - pt)
+
+cmtAsFunc (Add x) = (+) x
+cmtAsFunc (Min x) = (-) x
+cmtAsFunc (Mod x) = mod x
 
 data GameState = GameState
   { _playerState :: [PlayerState]
@@ -62,8 +76,8 @@ playCard pt c@NumberCard{} gameState =
   gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c where
   playerBoard = gameState ^. (playerState . element pt . board)
   --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
-playCard pt (BuffCard loc amount) gameState =
-  gameState & (playerState . element pt . locAsLens loc . traverse) %~ buff (+ amount)
+playCard pt (BuffCard loc tgt cmt) gameState =
+  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ buff (cmtAsFunc cmt) -- (+ amount)
 playCard _ NullCard gameState = gameState
 
 -- boards are technically not supposed to be empty
@@ -124,8 +138,8 @@ advanceGame bound gameState = if any _winner (_playerState gameState)
   afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
 
 --deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
-deck1 = NumberCard 0 : BuffCard Board 5 : deck1
-deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board 5))
+deck1 = NumberCard 0 : BuffCard Board Friendly (Add 5) : deck1
+deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board Friendly (Add 5)))
 
 randomPermutations :: MonadRandom m => [a] -> m [a]
 randomPermutations l = do
