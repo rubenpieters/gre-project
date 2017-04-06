@@ -51,7 +51,7 @@ locAsLens Board = board
 locAsLens Hand = hand
 locAsLens Deck = hand
 
---tgtAsLens All = traverse
+tgtAsLens pt All = traverse
 tgtAsLens pt Friendly = element pt
 tgtAsLens pt Enemy = element (1 - pt)
 
@@ -159,11 +159,11 @@ testGame2 = do
   let states = playFunc deckP1 deckP2
   let lastState = last states
   let nextState = advanceGame 1 lastState
-  return (nextState ^. turnCount, map _winner (nextState ^. playerState))
+  return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
 
 turns = iterate (advanceGame 1) testGame
 
-playUntilWinner = takeWhile (\gs -> all (not . _winner) (gs ^. playerState )) turns
+playUntilWinner = takeWhile (\gs -> none _winner (gs ^. playerState)) turns
 
 playFunc :: [Card] -> [Card] -> [GameState]
 playFunc d1 d2 = takeWhile playCond allStates where
@@ -172,7 +172,7 @@ playFunc d1 d2 = takeWhile playCond allStates where
   allStates = iterate (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
 
 playCond :: GameState -> Bool
-playCond gs = all (not . _winner) (gs ^. playerState) && (gs ^. turnCount) < 1000
+playCond gs = none _winner (gs ^. playerState) && (gs ^. turnCount) < 1000
 
 main :: IO ()
 main = do
