@@ -1,12 +1,17 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 
---module Main where
+module Lib
+  ( test
+  , testGame2
+  ) where
 
 import Control.Lens
 
 import System.Random.Shuffle
 import Control.Monad.Random
+
+test = "test"
 
 data Location = Board | Hand | Deck deriving (Show, Eq)
 
