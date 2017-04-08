@@ -2,7 +2,10 @@
 {-# LANGUAGE FlexibleContexts #-}
 
 module Lib
-  ( test
+  ( Card(..)
+  , Location(..)
+  , Target(..)
+  , CardModType(..)
   , testGame2
   ) where
 
@@ -10,8 +13,6 @@ import Control.Lens
 
 import System.Random.Shuffle
 import Control.Monad.Random
-
-test = "test"
 
 data Location = Board | Hand | Deck deriving (Show, Eq)
 
