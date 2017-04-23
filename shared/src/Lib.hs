@@ -20,15 +20,16 @@ data Target = All | Friendly | Enemy deriving (Show, Eq)
 
 data CardModType = Add Int | Min Int | Mod Int deriving (Show, Eq)
 
+data CardCappingType = NoCap | MaxCap Int | MinCap Int deriving (Show, Eq)
+
+data CardProps = CardProps CardModType CardCappingType deriving (Show, Eq)
+
 data Card =
   NumberCard Int
-  | BuffCard Location Target CardModType
+  | BuffCard Location Target CardProps
+  | CheckAndBuffCard Location Target
   | NullCard
   deriving (Show, Eq)
-
-buff f (NumberCard x) = NumberCard (f x)
-buff _ c@BuffCard{} = c
-buff _ c@NullCard = c
 
 type Board = [Card]
 type Hand = [Card]
@@ -61,9 +62,26 @@ tgtAsLens pt All = traverse
 tgtAsLens pt Friendly = element pt
 tgtAsLens pt Enemy = element (1 - pt)
 
+cmtAsFunc :: CardModType -> Int -> Int
 cmtAsFunc (Add x) = (+) x
 cmtAsFunc (Min x) = (-) x
 cmtAsFunc (Mod x) = mod x
+
+cctAsFunc :: CardCappingType -> Int -> Int
+cctAsFunc NoCap x = x
+cctAsFunc (MaxCap cap) x = if x > cap then cap else x
+cctAsFunc (MinCap cap) x = if x < cap then cap else x
+
+cardPropFunc (CardProps cmt cct) c = buff (cctAsFunc cct . cmtAsFunc cmt) c
+
+buff f c = case ncFunc (NumberCard . f) c of
+  Just c' -> c'
+  Nothing -> c
+
+cardVal c = ncFunc id c
+
+ncFunc f (NumberCard x) = Just (f x)
+ncFunc _ _ = Nothing
 
 data GameState = GameState
   { _playerState :: [PlayerState]
@@ -82,9 +100,13 @@ playCard pt c@NumberCard{} gameState =
   gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c where
   playerBoard = gameState ^. (playerState . element pt . board)
   --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
-playCard pt (BuffCard loc tgt cmt) gameState =
-  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ buff (cmtAsFunc cmt) -- (+ amount)
+playCard pt (BuffCard loc tgt cardProps) gameState =
+  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ cardPropFunc cardProps
 playCard _ NullCard gameState = gameState
+playCard pt c@(CheckAndBuffCard loc tgt) gameState =
+  gameState
+  where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
+        avgCardVal = traverse cardVal check
 
 -- boards are technically not supposed to be empty
 -- but it still gives us index `0` if we would pass it an empty list as board
@@ -126,7 +148,7 @@ advancePlayerTurn bound current =
 
 checkWinCon :: PlayerState -> PlayerState
 checkWinCon ps@PlayerState {_board = b} =
-  if any cardWinCon b
+  if all cardWinCon b
   then ps & winner .~ True
   else ps
   where
@@ -144,8 +166,9 @@ advanceGame bound gameState = if any _winner (_playerState gameState)
   afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
 
 --deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
-deck1 = NumberCard 0 : BuffCard Board Friendly (Add 5) : deck1
-deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board Friendly (Add 5)))
+deck1 = NumberCard 0 : BuffCard Board Friendly (CardProps (Add 5) (MaxCap 100)) : deck1
+deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board Friendly (CardProps (Add 5) (MaxCap 100))))
+deck3 = [NumberCard 0]
 
 randomPermutations :: MonadRandom m => [a] -> m [a]
 randomPermutations l = do
@@ -153,8 +176,8 @@ randomPermutations l = do
   y <- randomPermutations l
   return (x ++ y)
 
-player1 = mkPlayer deck1
-player2 = mkPlayer deck1
+player1 = mkPlayer deck3
+player2 = mkPlayer deck3
 
 testGame = GameState {_playerState = [player1, player2], _playerTurn = 0, _turnCount = 0}
 
