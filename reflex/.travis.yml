@@ -1,0 +1,33 @@
+language: c
+# GHC depends on GMP. You can add other dependencies here as well.
+dist: trusty
+addons:
+  apt:
+    packages:
+    - libgmp-dev
+    - build-essential
+    - cmake
+    - git
+
+before_install:
+  - mkdir -p ~/.local/bin
+  - export PATH=$HOME/.local/bin:$PATH
+  - travis_retry curl -L https://ci.stackage.org/stack/linux-x86_64 | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+  - chmod a+x ~/.local/bin/stack
+  - nvm install 6.7.0
+  - nvm use 6.7.0
+
+env:
+- ISOLATED=true CACHE_NAME=LTS_7_1
+
+cache:
+  timeout: 1000
+  directories:
+    - $HOME/.stack
+    - $HOME/.ghcjs
+
+script:
+  - bash init.sh
+
+
+sudo: false
