@@ -6,6 +6,11 @@ module Lib
   , Location(..)
   , Target(..)
   , CardModType(..)
+  , PlayerState(..)
+  , hand
+  , deck
+  , board
+  , winner
   , testGame2
   ) where
 
