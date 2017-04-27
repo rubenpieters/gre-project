@@ -1,5 +1,6 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 
 module Lib
   ( Card(..)
@@ -23,11 +24,14 @@ data Location = Board | Hand | Deck deriving (Show, Eq)
 
 data Target = All | Friendly | Enemy deriving (Show, Eq)
 
-data CardModType = Add Int | Min Int | Mod Int deriving (Show, Eq)
+data CardModType = Add Int | Min Int | Mod Int | Set Int deriving (Show, Eq)
 
 data CardCappingType = NoCap | MaxCap Int | MinCap Int deriving (Show, Eq)
 
 data CardProps = CardProps CardModType CardCappingType deriving (Show, Eq)
+
+data BoardCheckType a where
+  AvgCardVal :: BoardCheckType Int
 
 data Card =
   NumberCard Int
@@ -71,11 +75,18 @@ cmtAsFunc :: CardModType -> Int -> Int
 cmtAsFunc (Add x) = (+) x
 cmtAsFunc (Min x) = (-) x
 cmtAsFunc (Mod x) = mod x
+cmtAsFunc (Set x) = const x
 
 cctAsFunc :: CardCappingType -> Int -> Int
 cctAsFunc NoCap x = x
 cctAsFunc (MaxCap cap) x = if x > cap then cap else x
 cctAsFunc (MinCap cap) x = if x < cap then cap else x
+
+bctAsFunc :: BoardCheckType a -> [Card] -> Maybe a
+bctAsFunc AvgCardVal cs = fmap average $ traverse cardVal cs
+
+average :: Foldable t => t Int -> Int
+average xs = sum xs `div` length xs
 
 cardPropFunc (CardProps cmt cct) c = buff (cctAsFunc cct . cmtAsFunc cmt) c
 
@@ -109,9 +120,12 @@ playCard pt (BuffCard loc tgt cardProps) gameState =
   gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ cardPropFunc cardProps
 playCard _ NullCard gameState = gameState
 playCard pt c@(CheckAndBuffCard loc tgt) gameState =
-  gameState
+  case avgCardVal of
+    Just x -> gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
+                %~ cardPropFunc (CardProps (Set x) NoCap)
+    Nothing -> gameState
   where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
-        avgCardVal = traverse cardVal check
+        avgCardVal = fmap average $ traverse cardVal check
 
 -- boards are technically not supposed to be empty
 -- but it still gives us index `0` if we would pass it an empty list as board
