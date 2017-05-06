@@ -1,34 +1,57 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 module Lib
   ( Card(..)
   , Location(..)
   , Target(..)
   , CardModType(..)
+  , CardCappingType(..)
+  , CardProps(..)
   , PlayerState(..)
+  , locAsLens
   , hand
   , deck
+  , deck2
   , board
   , winner
   , testGame2
-  ) where
-
-import Control.Lens
+  , testGame'
+  , discardCard
+  , playXTimes
+  , runGameIO
+  )
+  where
 
 import System.Random.Shuffle
+
+import Control.Lens
+import Control.Monad
+import Control.Monad.Extra (iterateM)
+import Control.Monad.Writer (MonadWriter(tell),runWriterT)
 import Control.Monad.Random
 
-data Location = Board | Hand | Deck deriving (Show, Eq)
+import GHC.Generics
 
-data Target = All | Friendly | Enemy deriving (Show, Eq)
+data GameLog = GameLog String
+  deriving (Generic, Show)
 
-data CardModType = Add Int | Min Int | Mod Int | Set Int deriving (Show, Eq)
+data Location = Board | Hand | Deck
+  deriving (Generic, Show, Eq, Ord)
 
-data CardCappingType = NoCap | MaxCap Int | MinCap Int deriving (Show, Eq)
+data Target = All | Friendly | Enemy
+  deriving (Generic, Show, Eq, Ord)
 
-data CardProps = CardProps CardModType CardCappingType deriving (Show, Eq)
+data CardModType = Add Int | Min Int | Mod Int | Set Int
+  deriving (Generic, Show, Eq, Ord)
+
+data CardCappingType = NoCap | MaxCap Int | MinCap Int
+  deriving (Generic, Show, Eq, Ord)
+
+data CardProps = CardProps CardModType CardCappingType
+  deriving (Generic, Show, Eq, Ord)
 
 data BoardCheckType a where
   AvgCardVal :: BoardCheckType Int
@@ -38,7 +61,7 @@ data Card =
   | BuffCard Location Target CardProps
   | CheckAndBuffCard Location Target
   | NullCard
-  deriving (Show, Eq)
+  deriving (Generic, Show, Eq, Ord)
 
 type Board = [Card]
 type Hand = [Card]
@@ -50,7 +73,7 @@ data PlayerState = PlayerState
   , _board :: Board
   , _winner :: Bool
   }
-  deriving (Eq)
+  deriving (Generic, Eq)
 
 instance Show PlayerState where
   show PlayerState {_hand = h, _deck = [], _board = b, _winner = w} =
@@ -65,7 +88,7 @@ mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard, 
 
 locAsLens Board = board
 locAsLens Hand = hand
-locAsLens Deck = hand
+locAsLens Deck = deck
 
 tgtAsLens pt All = traverse
 tgtAsLens pt Friendly = element pt
@@ -113,8 +136,8 @@ type TurnBound = Int
 
 playCard :: PlayerTurn -> Card -> GameState -> GameState
 playCard pt c@NumberCard{} gameState =
-  gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c where
-  playerBoard = gameState ^. (playerState . element pt . board)
+  gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c
+  where playerBoard = gameState ^. (playerState . element pt . board)
   --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
 playCard pt (BuffCard loc tgt cardProps) gameState =
   gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ cardPropFunc cardProps
@@ -146,16 +169,19 @@ discardCard :: PlayerState -> PlayerState
 discardCard ps@PlayerState {_hand = []} = ps
 discardCard ps@PlayerState {_hand = (_:h)} = ps & hand .~ h
 
-executeTurn :: PlayerTurn -> GameState -> GameState
-executeTurn pt gameState = afterDiscardCard where
-  afterDrawCard = gameState & (playerState . element pt) %~ drawCard
-  maybeCardToPlay :: Maybe Card
-  maybeCardToPlay = afterDrawCard ^? (playerState . element pt . hand . element 0)
-  play :: Maybe Card -> GameState -> GameState
-  play (Just c) = playCard pt c
-  play Nothing = id
-  afterPlayCard = play maybeCardToPlay afterDrawCard
-  afterDiscardCard = afterPlayCard & (playerState . element pt) %~ discardCard
+executeTurn :: (MonadWriter [GameLog] m) => PlayerTurn -> GameState -> m GameState
+executeTurn pt gameState = do
+  tell [GameLog ("Player " ++ (show pt) ++ " Playing " ++ (show maybeCardToPlay))]
+  return afterDiscardCard
+  where
+    afterDrawCard = gameState & (playerState . element pt) %~ drawCard
+    maybeCardToPlay :: Maybe Card
+    maybeCardToPlay = afterDrawCard ^? (playerState . element pt . hand . element 0)
+    play :: Maybe Card -> GameState -> GameState
+    play (Just c) = playCard pt c
+    play Nothing = id
+    afterPlayCard = play maybeCardToPlay afterDrawCard
+    afterDiscardCard = afterPlayCard & (playerState . element pt) %~ discardCard
 
 advancePlayerTurn :: TurnBound -> PlayerTurn -> PlayerTurn
 advancePlayerTurn bound current =
@@ -174,15 +200,19 @@ checkWinCon ps@PlayerState {_board = b} =
   cardWinCon (NumberCard 100) = True
   cardWinCon _ = False
 
-advanceGame :: TurnBound -> GameState -> GameState
-advanceGame bound gameState = if any _winner (_playerState gameState)
+advanceGame :: (MonadWriter [GameLog] m) => TurnBound -> GameState -> m GameState
+advanceGame bound gameState = do
+  nextGameState <- executeTurn (_playerTurn gameState) gameState
+  return $ advanceTurn bound nextGameState
+
+advanceTurn :: TurnBound -> GameState -> GameState
+advanceTurn bound gameState = if any _winner (_playerState gameState)
   then gameState
   else afterCheckWinner
   where
-  nextGameState = executeTurn (_playerTurn gameState) gameState
-  afterAdvanceTurn = nextGameState & playerTurn %~ advancePlayerTurn bound
-  afterAdvanceTurnCount = afterAdvanceTurn & turnCount %~ (+) 1
-  afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
+    afterAdvanceTurn = gameState & playerTurn %~ advancePlayerTurn bound
+    afterAdvanceTurnCount = afterAdvanceTurn & turnCount %~ (+) 1
+    afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
 
 --deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
 deck1 = NumberCard 0 : BuffCard Board Friendly (CardProps (Add 5) (MaxCap 100)) : deck1
@@ -200,27 +230,56 @@ player2 = mkPlayer deck3
 
 testGame = GameState {_playerState = [player1, player2], _playerTurn = 0, _turnCount = 0}
 
-testGame2 :: MonadRandom m => m (Int, [Bool])
+testGame2 :: (MonadWriter [GameLog] m, MonadRandom m) => m (Int, [Bool])
 testGame2 = do
   deckP1 <- shuffleM deck2
   deckP2 <- shuffleM deck2
   let states = playFunc deckP1 deckP2
-  let lastState = last states
-  let nextState = advanceGame 1 lastState
+  states' <- states
+  let lastState = last states'
+  nextState <- advanceGame 1 lastState
   return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
 
-turns = iterate (advanceGame 1) testGame
+testGame' :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m (Int, [Bool])
+testGame' deckP1' deckP2' = do
+  deckP1 <- shuffleM deckP1'
+  deckP2 <- shuffleM deckP2'
+  let states = playFunc deckP1 deckP2
+  states' <- states
+  let lastState = last states'
+  nextState <- advanceGame 1 lastState
+  return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
 
-playUntilWinner = takeWhile (\gs -> none _winner (gs ^. playerState)) turns
+playXTimes :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> Int -> m (Int, Int)
+playXTimes deckP1 deckP2 times = fmap (foldr winnerCounting (0, 0)) replicated
+  where
+    replicated = replicateM times (testGame' deckP1 deckP2)
+    winnerCounting (_, [p1, p2]) (x, y) = (x + add p1, y + add p2)
+    winnerCounting _ _ = error "less/more than 2 players not supported yet"
+    add b = if b then 1 else 0
 
-playFunc :: [Card] -> [Card] -> [GameState]
-playFunc d1 d2 = takeWhile playCond allStates where
-  pl1 = mkPlayer d1
-  pl2 = mkPlayer d2
-  allStates = iterate (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
+turns :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
+turns = iterateM (advanceGame 1) testGame
+
+playUntilWinner :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
+playUntilWinner = do
+  turns' <- turns
+  return $ takeWhile (\gs -> none _winner (gs ^. playerState)) turns'
+
+playFunc :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m [GameState]
+playFunc d1 d2 = do
+  allStates' <- allStates
+  return $ takeWhile playCond allStates'
+  where
+    pl1 = mkPlayer d1
+    pl2 = mkPlayer d2
+    allStates = iterateM (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
 
 playCond :: GameState -> Bool
 playCond gs = none _winner (gs ^. playerState) && (gs ^. turnCount) < 1000
+
+--runGameIO :: (MonadWriter w m, MonadRandom m) => m a -> IO (a, w)
+runGameIO = evalRandIO . runWriterT
 
 main :: IO ()
 main = do

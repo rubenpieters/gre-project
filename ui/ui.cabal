@@ -23,4 +23,6 @@ executable ui
                      , text
                      , blaze-bootstrap >=0.1
                      , blaze-html >=0.7
+                     , reflex
+                     , reflex-dom
                      , gre-project

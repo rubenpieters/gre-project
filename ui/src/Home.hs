@@ -18,9 +18,18 @@ homeView = do
          H.title "GRE-1"
      H.body $ do
          H.p "Cards:"
-         H.ul $ forM_ cards (H.li . H.toHtml . show)
+         H.ul $ do
+           forM_ cards cardSelect
 
-cards :: [Card]
-cards = [NumberCard 1
-        , BuffCard Board Friendly (Add 5)
+type CardAmt = (Card, Int)
+
+cardSelect :: CardAmt -> H.Html
+cardSelect (c, i) = H.li $ do
+  H.toHtml (show c ++ ", count: " ++ show i)
+  H.button "+1" ! A.onclick "bar"
+  H.button "-1"
+
+cards :: [CardAmt]
+cards = [(NumberCard 1, 0)
+        , (BuffCard Board Friendly (Add 5), 0)
         ]

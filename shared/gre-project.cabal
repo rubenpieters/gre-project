@@ -22,6 +22,7 @@ library
                      , lens
                      , random-shuffle
                      , MonadRandom
+                     , monad-extras
   ghc-options:         -Wall
   default-language:    Haskell2010
 
@@ -34,7 +35,7 @@ executable gre-project
                      , lens
                      , random-shuffle
                      , MonadRandom
-
+                     , monad-extras
 
 test-suite spec
   type:
@@ -50,6 +51,7 @@ test-suite spec
   build-depends:
       base >= 4.7 && <5
     , gre-project
+    , lens
     , hspec == 2.*
     , QuickCheck
     , generic-random
