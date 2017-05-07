@@ -4,7 +4,8 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 module Lib
-  ( Card(..)
+  ( GameLog
+  , Card(..)
   , Location(..)
   , Target(..)
   , CardModType(..)
@@ -29,7 +30,7 @@ import System.Random.Shuffle
 
 import Control.Lens
 import Control.Monad
-import Control.Monad.Extra (iterateM)
+import Control.Monad.Loops
 import Control.Monad.Writer (MonadWriter(tell),runWriterT)
 import Control.Monad.Random
 
@@ -234,20 +235,21 @@ testGame2 :: (MonadWriter [GameLog] m, MonadRandom m) => m (Int, [Bool])
 testGame2 = do
   deckP1 <- shuffleM deck2
   deckP2 <- shuffleM deck2
-  let states = playFunc deckP1 deckP2
-  states' <- states
-  let lastState = last states'
-  nextState <- advanceGame 1 lastState
+  let lastState = playFunc deckP1 deckP2
+--  states' <- states
+--  let lastState = last states'
+  nextState <- lastState >>= advanceGame 1
   return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
 
 testGame' :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m (Int, [Bool])
 testGame' deckP1' deckP2' = do
+  tell [GameLog "--- Starting Game ---"]
   deckP1 <- shuffleM deckP1'
   deckP2 <- shuffleM deckP2'
-  let states = playFunc deckP1 deckP2
-  states' <- states
-  let lastState = last states'
-  nextState <- advanceGame 1 lastState
+  let lastState = playFunc deckP1 deckP2
+--  states' <- states
+--  let lastState = last states'
+  nextState <- lastState >>= advanceGame 1
   return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
 
 playXTimes :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> Int -> m (Int, Int)
@@ -258,25 +260,26 @@ playXTimes deckP1 deckP2 times = fmap (foldr winnerCounting (0, 0)) replicated
     winnerCounting _ _ = error "less/more than 2 players not supported yet"
     add b = if b then 1 else 0
 
-turns :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
-turns = iterateM (advanceGame 1) testGame
+--turns :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
+--turns = iterateM (advanceGame 1) testGame
 
-playUntilWinner :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
+playUntilWinner :: (MonadWriter [GameLog] m, MonadRandom m) => m GameState
 playUntilWinner = do
-  turns' <- turns
-  return $ takeWhile (\gs -> none _winner (gs ^. playerState)) turns'
+  iterateUntilM (\gs -> any _winner (gs ^. playerState)) (advanceGame 1) testGame
 
-playFunc :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m [GameState]
+playFunc :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m GameState
 playFunc d1 d2 = do
-  allStates' <- allStates
-  return $ takeWhile playCond allStates'
+  allStates
   where
     pl1 = mkPlayer d1
     pl2 = mkPlayer d2
-    allStates = iterateM (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
+    allStates = iterateUntilM stopCond (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
 
 playCond :: GameState -> Bool
 playCond gs = none _winner (gs ^. playerState) && (gs ^. turnCount) < 1000
+
+stopCond :: GameState -> Bool
+stopCond = not . playCond
 
 --runGameIO :: (MonadWriter w m, MonadRandom m) => m a -> IO (a, w)
 runGameIO = evalRandIO . runWriterT

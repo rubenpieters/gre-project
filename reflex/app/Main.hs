@@ -1,8 +1,10 @@
 {-# LANGUAGE RecursiveDo #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module Main where
 
 import Control.Monad
+import Control.Monad.Writer
 import Control.Monad.Trans
 import Control.Monad.Random
 
@@ -32,15 +34,16 @@ main = mainWidget $ el "div" $ do
     el "div" $ display =<< clicks'
     test <- (mapDyn (\x -> fmap (const $ M.elems x) runClick) clicksJoined)
     let test' = switchPromptlyDyn test
-    test'' <- performArg (flip runGame cards) test'
-    let test''Dyn = holdDyn (0, 0) test''
-    --gameResult <- fmap (mapDyn (\x -> testGame' (assemble (zip cards x)) otherDeck)) test'Dyn
+    test'' <- performArg (runGameIO . flip runGame cards) test'
+    let gameResult = holdDyn (0, 0) (fmap fst $ test'')
+    --let gameLog = holdDyn [] (fmap snd $ test'')
     runClick <- button "run"
-    display =<< test''Dyn
+    display =<< gameResult
+    --display =<< gameLog
   return ()
 
-runGame :: (MonadRandom m) => [Int] -> [Card] -> m (Int, Int)
-runGame nrs cards = playXTimes (assemble (zip cards nrs)) otherDeck 20
+runGame :: (MonadWriter [GameLog] m, MonadRandom m) => [Int] -> [Card] -> m (Int, Int)
+runGame nrs cards = playXTimes (assemble (zip cards nrs)) otherDeck 5
 
 performArg :: MonadWidget t m => (b -> IO a) -> Event t b -> m (Event t a)
 performArg f x = performEvent (fmap (liftIO . f) x)
