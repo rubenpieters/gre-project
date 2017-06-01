@@ -2,9 +2,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Lib
-  ( GameLog
+{-}  ( GameLog
   , Card(..)
   , Location(..)
   , Target(..)
@@ -23,7 +27,10 @@ module Lib
   , discardCard
   , playXTimes
   , runGameIO
-  )
+  , BoardCheckType(..)
+  , BoardTransformType(..)
+  , CheckTransform(..)
+  )-}
   where
 
 import System.Random.Shuffle
@@ -57,10 +64,53 @@ data CardProps = CardProps CardModType CardCappingType
 data BoardCheckType a where
   AvgCardVal :: BoardCheckType Int
 
+instance Show (BoardCheckType a) where
+  show AvgCardVal = "AvgCardVal"
+
+bcEq :: BoardCheckType a -> BoardCheckType b -> Bool
+bcEq AvgCardVal AvgCardVal = True
+bcEq _ _ = False
+
+bcLte :: BoardCheckType a -> BoardCheckType b -> Bool
+bcLte AvgCardVal AvgCardVal = True
+bcLte _ _ = False
+
+data BoardTransformType a where
+  SetAll :: BoardTransformType Int
+  DoIf :: BoardTransformType Bool
+
+instance Show (BoardTransformType a) where
+  show SetAll = "SetAll"
+  show DoIf = "DoIf"
+
+btEq :: BoardTransformType a -> BoardTransformType b -> Bool
+btEq SetAll SetAll = True
+btEq DoIf DoIf = True
+btEq _ _ = False
+
+btLte :: BoardTransformType a -> BoardTransformType b -> Bool
+btLte SetAll SetAll = True
+btLte SetAll DoIf = True
+btLte DoIf DoIf = True
+btLte _ _ = False
+
+data CheckTransform where
+  CheckTransform :: BoardCheckType a -> BoardTransformType a -> CheckTransform
+
+instance Show CheckTransform where
+  show (CheckTransform bct btt) = "CheckTransform " ++ show bct ++ " " ++ show btt
+
+instance Eq CheckTransform where
+  (CheckTransform bct1 btt1) == (CheckTransform bct2 btt2) = bcEq bct1 bct2 && btEq btt1 btt2
+
+instance Ord CheckTransform where
+  (CheckTransform bct1 btt1) <= (CheckTransform bct2 btt2) = bcLte bct1 bct2 && btLte btt1 btt2
+
 data Card =
   NumberCard Int
   | BuffCard Location Target CardProps
   | CheckAndBuffCard Location Target
+  | CheckTransformCard Location Target CheckTransform
   | NullCard
   deriving (Generic, Show, Eq, Ord)
 
@@ -86,6 +136,17 @@ makeLenses ''PlayerState
 
 mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard, _winner = False}
 
+type PlayerTurn = Int
+type TurnBound = Int
+
+data GameState = GameState
+  { _playerState :: [PlayerState]
+  , _playerTurn :: Int
+  , _turnCount :: Int
+  }
+  deriving (Show)
+
+makeLenses ''GameState
 
 locAsLens Board = board
 locAsLens Hand = hand
@@ -109,6 +170,12 @@ cctAsFunc (MinCap cap) x = if x < cap then cap else x
 bctAsFunc :: BoardCheckType a -> [Card] -> Maybe a
 bctAsFunc AvgCardVal cs = fmap average $ traverse cardVal cs
 
+bttAsFunc :: BoardTransformType a -> a -> [Card] -> [Card]
+bttAsFunc SetAll a cards = map (buff $ cmtAsFunc (Set a)) cards
+
+allTargets :: GameState -> Location -> Target -> PlayerTurn -> [Card]
+allTargets gs loc tgt pt = gs ^. (playerState . tgtAsLens pt tgt . locAsLens loc)
+
 average :: Foldable t => t Int -> Int
 average xs = sum xs `div` length xs
 
@@ -122,18 +189,6 @@ cardVal c = ncFunc id c
 
 ncFunc f (NumberCard x) = Just (f x)
 ncFunc _ _ = Nothing
-
-data GameState = GameState
-  { _playerState :: [PlayerState]
-  , _playerTurn :: Int
-  , _turnCount :: Int
-  }
-  deriving (Show)
-
-makeLenses ''GameState
-
-type PlayerTurn = Int
-type TurnBound = Int
 
 playCard :: PlayerTurn -> Card -> GameState -> GameState
 playCard pt c@NumberCard{} gameState =
@@ -150,6 +205,14 @@ playCard pt c@(CheckAndBuffCard loc tgt) gameState =
     Nothing -> gameState
   where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
         avgCardVal = fmap average $ traverse cardVal check
+playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) gameState =
+  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ transformFunc
+  where
+    checkTargets = allTargets gameState loc tgt pt
+    checkValue = bctAsFunc check checkTargets
+    transformFunc = case checkValue of
+      Just a -> bttAsFunc transform a
+      Nothing -> id
 
 -- boards are technically not supposed to be empty
 -- but it still gives us index `0` if we would pass it an empty list as board
@@ -283,6 +346,10 @@ stopCond = not . playCond
 
 --runGameIO :: (MonadWriter w m, MonadRandom m) => m a -> IO (a, w)
 runGameIO = evalRandIO . runWriterT
+
+
+testPlayer = PlayerState {_hand = [], _deck = [], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
+testBoard = GameState {_playerState = [testPlayer, testPlayer], _playerTurn = 0, _turnCount = 0}
 
 main :: IO ()
 main = do
