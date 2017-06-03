@@ -4,8 +4,8 @@ import Test.Hspec
 import Test.QuickCheck
 import Generic.Random.Generic
 
-import Control.Lens
-import Lib
+import Control.Lens hiding (elements)
+import Lib hiding (main)
 
 instance Arbitrary Location where
   arbitrary = genericArbitrary' Z uniform
@@ -28,6 +28,15 @@ instance Arbitrary Card where
 instance Arbitrary PlayerState where
   arbitrary = genericArbitrary' Z uniform
 
+instance Arbitrary CheckTransform where
+  arbitrary = elements [ CheckTransform AvgCardVal SetAll
+                       ]
+
+testPlayer_EmptyDeckHand = PlayerState {_hand = [], _deck = [], _board = [NumberCard 0, NumberCard 0, NumberCard 0], _winner = False}
+testBoard_All0 = GameState {_playerState = [testPlayer_EmptyDeckHand, testPlayer_EmptyDeckHand], _playerTurn = 0, _turnCount = 0}
+
+testPlayer_Board123 = PlayerState {_hand = [], _deck = [], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
+testBoard_Board123 = GameState {_playerState = [testPlayer_Board123, testPlayer_Board123], _playerTurn = 0, _turnCount = 0}
 
 main :: IO ()
 main = hspec spec
@@ -44,3 +53,11 @@ spec = do
   describe "discardCard" $ do
     it "should decrease hand size" $ property $ do
       \ps -> length (discardCard ps ^. hand) <= length (ps ^. hand)
+  describe "card3" $ do
+    it "should work in basic case" $ do
+      let newBoard = playCard 0 card3 testBoard_All0
+      newBoard `shouldBe` (testBoard_All0 & (playerState . element 0 . board) .~ replicate 3 (NumberCard 2))
+  describe "card8" $ do
+    it "should work in basic case" $ do
+      let newBoard = playCard 0 card8 testBoard_Board123
+      newBoard `shouldBe` testBoard_All0

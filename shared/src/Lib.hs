@@ -106,6 +106,7 @@ instance Eq CheckTransform where
 instance Ord CheckTransform where
   (CheckTransform bct1 btt1) <= (CheckTransform bct2 btt2) = bcLte bct1 bct2 && btLte btt1 btt2
 
+
 data Card =
   NumberCard Int
   | BuffCard Location Target CardProps
@@ -144,7 +145,7 @@ data GameState = GameState
   , _playerTurn :: Int
   , _turnCount :: Int
   }
-  deriving (Show)
+  deriving (Eq, Show)
 
 makeLenses ''GameState
 
@@ -350,6 +351,9 @@ runGameIO = evalRandIO . runWriterT
 
 testPlayer = PlayerState {_hand = [], _deck = [], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
 testBoard = GameState {_playerState = [testPlayer, testPlayer], _playerTurn = 0, _turnCount = 0}
+
+card3 = BuffCard Board Friendly (CardProps (Add 2) (MaxCap 100))
+card8 = BuffCard Board All (CardProps (Set 0) NoCap)
 
 main :: IO ()
 main = do
