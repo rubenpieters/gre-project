@@ -56,6 +56,10 @@ spec = do
   describe "discardCard" $ do
     it "should decrease hand size" $ property $ do
       \ps -> length (discardCard ps ^. hand) <= length (ps ^. hand)
+  describe "card1" $ do
+    it "should work in basic case" $ do
+      let newBoard = playCard 0 card1 testGS_Board123
+      newBoard `shouldBe` (testGS_Board123 & (playerState . element 0 . board . element 0) .~ NumberCard 10)
   describe "card3" $ do
     it "should work in basic case" $ do
       let newBoard = playCard 0 card3 testGS_All0

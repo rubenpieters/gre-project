@@ -35,6 +35,10 @@ module Lib
 
 import System.Random.Shuffle
 
+import Data.List
+import Data.Maybe
+import Data.Foldable
+
 import Control.Lens
 import Control.Monad
 import Control.Monad.Loops
@@ -61,37 +65,65 @@ data CardCappingType = NoCap | MaxCap Int | MinCap Int
 data CardProps = CardProps CardModType CardCappingType
   deriving (Generic, Show, Eq, Ord)
 
+data CardFilter = NoFilter | Lowest
+  deriving (Generic, Show, Eq, Ord)
+
 data BoardCheckType a where
   AvgCardVal :: BoardCheckType Int
+  HighestCardIx :: BoardCheckType Int
+  LowestCardIx :: BoardCheckType Int
+  LowestHighestIx :: BoardCheckType (Int, Int)
 
 instance Show (BoardCheckType a) where
   show AvgCardVal = "AvgCardVal"
+  show HighestCardIx = "HighestCardIx"
+  show LowestCardIx = "LowestCardIx"
+  show LowestHighestIx = "LowestHighestIx"
 
 bcEq :: BoardCheckType a -> BoardCheckType b -> Bool
 bcEq AvgCardVal AvgCardVal = True
+bcEq HighestCardIx HighestCardIx = True
+bcEq LowestCardIx LowestCardIx = True
+bcEq LowestHighestIx LowestHighestIx = True
 bcEq _ _ = False
 
 bcLte :: BoardCheckType a -> BoardCheckType b -> Bool
-bcLte AvgCardVal AvgCardVal = True
+bcLte a b | bcEq a b = True
+bcLte AvgCardVal HighestCardIx = True
+bcLte AvgCardVal LowestHighestIx = True
+bcLte AvgCardVal LowestCardIx = True
+bcLte HighestCardIx LowestHighestIx = True
+bcLte HighestCardIx LowestCardIx = True
+bcLte LowestCardIx LowestHighestIx = True
 bcLte _ _ = False
 
 data BoardTransformType a where
   SetAll :: BoardTransformType Int
   DoIf :: BoardTransformType Bool
+  CopyLR :: BoardTransformType Int
+  Absorb :: BoardTransformType (Int, Int)
 
 instance Show (BoardTransformType a) where
   show SetAll = "SetAll"
   show DoIf = "DoIf"
+  show CopyLR = "CopyLR"
+  show Absorb = "Absorb"
 
 btEq :: BoardTransformType a -> BoardTransformType b -> Bool
 btEq SetAll SetAll = True
 btEq DoIf DoIf = True
+btEq CopyLR CopyLR = True
+btEq Absorb Absorb = True
 btEq _ _ = False
 
 btLte :: BoardTransformType a -> BoardTransformType b -> Bool
-btLte SetAll SetAll = True
+btLte a b | btEq a b = True
 btLte SetAll DoIf = True
-btLte DoIf DoIf = True
+btLte SetAll CopyLR = True
+btLte SetAll Absorb = True
+btLte DoIf CopyLR = True
+btLte DoIf Absorb = True
+btLte CopyLR Absorb = True
 btLte _ _ = False
 
 data CheckTransform where
@@ -109,9 +141,10 @@ instance Ord CheckTransform where
 
 data Card =
   NumberCard Int
-  | BuffCard Location Target CardProps
+  | BuffCard Location Target CardFilter CardProps
   | CheckAndBuffCard Location Target
   | CheckTransformCard Location Target CheckTransform
+  | Move2ToTop Card Card
   | NullCard
   deriving (Generic, Show, Eq, Ord)
 
@@ -157,6 +190,13 @@ tgtAsLens pt All = traverse
 tgtAsLens pt Friendly = element pt
 tgtAsLens pt Enemy = element (1 - pt)
 
+filtAsLens _ _ _ _ NoFilter = filtered (const True)
+filtAsLens gs loc tgt pt Lowest = filtered (liftToCard lowestFilter)
+  where
+    targets = allTargets gs loc tgt pt
+    lowestCardValue = foldl (\cm c -> min cm (maybeNc 0 c)) 999999 targets
+    lowestFilter = (==) lowestCardValue
+
 cmtAsFunc :: CardModType -> Int -> Int
 cmtAsFunc (Add x) = (+) x
 cmtAsFunc (Min x) = (-) x
@@ -169,10 +209,28 @@ cctAsFunc (MaxCap cap) x = if x > cap then cap else x
 cctAsFunc (MinCap cap) x = if x < cap then cap else x
 
 bctAsFunc :: BoardCheckType a -> [Card] -> Maybe a
-bctAsFunc AvgCardVal cs = fmap average $ traverse cardVal cs
+bctAsFunc AvgCardVal cs = average <$> traverse cardVal cs
+bctAsFunc HighestCardIx cs = Just $ lowestCardIndex (>) cs
+bctAsFunc LowestCardIx cs = Just $ lowestCardIndex (<) cs
+bctAsFunc LowestHighestIx cs = (,) <$> bctAsFunc LowestCardIx cs <*> bctAsFunc HighestCardIx cs
 
 bttAsFunc :: BoardTransformType a -> a -> [Card] -> [Card]
 bttAsFunc SetAll a cards = map (buff $ cmtAsFunc (Set a)) cards
+bttAsFunc CopyLR a cards = case value of
+  Just x -> cards & element (a-1) .~ x
+                  & element (a+1) .~ x
+  Nothing -> cards
+  where
+    value = cards ^? element a
+bttAsFunc Absorb (l, r) cards = case cardsLR of
+  -- TODO: add capping
+  Just (cardL, _) -> cards & element l %~ buff (const 0)
+                           & element r %~ buff (maybeNc 0 cardL + )
+  Nothing -> cards
+  where
+    mCardL = cards ^? element l
+    mCardR = cards ^? element r
+    cardsLR = (,) <$> mCardL <*> mCardR
 
 allTargets :: GameState -> Location -> Target -> PlayerTurn -> [Card]
 allTargets gs loc tgt pt = gs ^. (playerState . tgtAsLens pt tgt . locAsLens loc)
@@ -188,16 +246,22 @@ buff f c = case ncFunc (NumberCard . f) c of
 
 cardVal c = ncFunc id c
 
+maybeNc :: Int -> Card -> Int
+maybeNc x = fromMaybe x . ncFunc id
+
 ncFunc f (NumberCard x) = Just (f x)
 ncFunc _ _ = Nothing
 
+liftToCard :: (Int -> b) -> (Card -> b)
+liftToCard f = f . maybeNc 0
+
 playCard :: PlayerTurn -> Card -> GameState -> GameState
 playCard pt c@NumberCard{} gameState =
-  gameState & (playerState . element pt . board . element (lowestCardIndex playerBoard)) .~ c
+  gameState & (playerState . element pt . board . element (lowestCardIndex (<) playerBoard)) .~ c
   where playerBoard = gameState ^. (playerState . element pt . board)
   --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
-playCard pt (BuffCard loc tgt cardProps) gameState =
-  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse) %~ cardPropFunc cardProps
+playCard pt (BuffCard loc tgt filt cardProps) gameState =
+  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc . traverse . filtAsLens gameState loc tgt pt filt) %~ cardPropFunc cardProps
 playCard _ NullCard gameState = gameState
 playCard pt c@(CheckAndBuffCard loc tgt) gameState =
   case avgCardVal of
@@ -214,14 +278,40 @@ playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) game
     transformFunc = case checkValue of
       Just a -> bttAsFunc transform a
       Nothing -> id
+-- TODO: handle case c1 == c2 differently
+-- TODO: what should happen when only 1 card can be found (currently nothing happens)
+playCard pt (Move2ToTop c1 c2) gameState = case newDeck of
+  Just newDeck' -> gameState & (playerState . tgtAsLens pt Friendly . locAsLens Deck) .~ newDeck'
+  Nothing -> gameState
+  where
+    deck = gameState ^.. (playerState . tgtAsLens pt Friendly . locAsLens Deck . traverse)
+    newDeck = do
+      i1 <- findIndexStartingFrom 0 c1 deck
+      i2 <- findIndexStartingFrom 0 c2 deck
+      return $ [deck !! i1, deck !! i2] ++ exceptIndices deck [i1, i2]
+
+findIndexStartingFrom :: (Eq a) => Int -> a -> [a] -> Maybe Int
+findIndexStartingFrom start a l = findIndex (a ==) (drop start l)
+
+exceptIndex :: (Foldable f) => f a -> Int -> [a]
+exceptIndex l i = l ^.. (folded . ifiltered (\i' _ -> i' /= i))
+
+exceptIndices :: (Foldable f) => f a -> [Int] -> [a]
+exceptIndices l i = l ^.. (folded . ifiltered (\i' _ -> not $ elem i' i))
+
+
 
 -- boards are technically not supposed to be empty
 -- but it still gives us index `0` if we would pass it an empty list as board
-lowestCardIndex b = go b NullCard 0 0 where
+--
+-- currently returns first element if multiple targets
+-- TODO: make it return all and select one element with a criterium
+lowestCardIndex :: (Num a) => (Int -> Int -> Bool) -> [Card] -> a
+lowestCardIndex f b = go b NullCard 0 0 where
   go [] _ accI _ = accI
   go (c:b') NullCard accI currI = go b' c accI (currI + 1)
   go (c@(NullCard):b') _ _ currI = go b' c currI (currI + 1)
-  go (c@(NumberCard x):b') (NumberCard y) _ currI | x < y = go b' c currI (currI + 1)
+  go (c@(NumberCard x):b') (NumberCard y) _ currI | f x y = go b' c currI (currI + 1)
   go (_:b') acc accI currI = go b' acc accI (currI + 1)
 
 drawCard :: PlayerState -> PlayerState
@@ -280,8 +370,8 @@ advanceTurn bound gameState = if any _winner (_playerState gameState)
     afterCheckWinner = afterAdvanceTurnCount & (playerState . traverse) %~ checkWinCon
 
 --deck1 = NumberCard 1 : replicate 100 (BuffCard Board 1) ++ deck1
-deck1 = NumberCard 0 : BuffCard Board Friendly (CardProps (Add 5) (MaxCap 100)) : deck1
-deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board Friendly (CardProps (Add 5) (MaxCap 100))))
+deck1 = NumberCard 0 : BuffCard Board Friendly NoFilter (CardProps (Add 5) (MaxCap 100)) : deck1
+deck2 = (replicate 1000 (NumberCard 5)) ++ (replicate 10000 (BuffCard Board Friendly NoFilter (CardProps (Add 5) (MaxCap 100))))
 deck3 = [NumberCard 0]
 
 randomPermutations :: MonadRandom m => [a] -> m [a]
@@ -352,9 +442,28 @@ runGameIO = evalRandIO . runWriterT
 testPlayer = PlayerState {_hand = [], _deck = [], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
 testBoard = GameState {_playerState = [testPlayer, testPlayer], _playerTurn = 0, _turnCount = 0}
 
-card3 = BuffCard Board Friendly (CardProps (Add 2) (MaxCap 100))
-card7 = BuffCard Deck Friendly (CardProps (Add 2) (MaxCap 100))
-card8 = BuffCard Board All (CardProps (Set 0) NoCap)
+testPlayer2 = PlayerState {_hand = [], _deck = [NumberCard 1, NumberCard 2, NumberCard 3, NumberCard 4], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
+testBoard2 = GameState {_playerState = [testPlayer2, testPlayer2], _playerTurn = 0, _turnCount = 0}
+
+
+card1 = NumberCard 10
+card2 = BuffCard Board All Lowest (CardProps (Add 5) (MaxCap 100))
+card3 = BuffCard Board Friendly NoFilter (CardProps (Add 2) (MaxCap 100))
+card4 = CheckTransformCard Board Friendly (CheckTransform HighestCardIx CopyLR)
+card5 = CheckTransformCard Board Friendly (CheckTransform LowestHighestIx Absorb)
+card6 = CheckTransformCard Board All (CheckTransform AvgCardVal SetAll)
+card7 = BuffCard Deck Friendly NoFilter (CardProps (Add 2) (MaxCap 100))
+card8 = BuffCard Board All NoFilter (CardProps (Set 0) NoCap)
+card9 = BuffCard Deck Enemy NoFilter (CardProps (Min 1) (MinCap 0))
+card10 = Move2ToTop
+
+atList :: Int -> Lens' [a] a
+atList n = singular (ix n)
+
+swapLens :: (Int -> Lens' fa a) -> Int -> Int -> fa -> fa
+swapLens at i j fx = set (at i) (view (at j) fx)
+                   $ set (at j) (view (at i) fx)
+                   $ fx
 
 main :: IO ()
 main = do
