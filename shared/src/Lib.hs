@@ -102,28 +102,36 @@ data BoardTransformType a where
   DoIf :: BoardTransformType Bool
   CopyLR :: BoardTransformType Int
   Absorb :: BoardTransformType (Int, Int)
+  BuffIx :: CardProps -> BoardTransformType Int
 
 instance Show (BoardTransformType a) where
   show SetAll = "SetAll"
   show DoIf = "DoIf"
   show CopyLR = "CopyLR"
   show Absorb = "Absorb"
+  show (BuffIx props) = "BuffIx " ++ show props
 
 btEq :: BoardTransformType a -> BoardTransformType b -> Bool
 btEq SetAll SetAll = True
 btEq DoIf DoIf = True
 btEq CopyLR CopyLR = True
 btEq Absorb Absorb = True
+btEq (BuffIx p1) (BuffIx p2) | p1 == p2 = True
 btEq _ _ = False
 
 btLte :: BoardTransformType a -> BoardTransformType b -> Bool
+btLte (BuffIx p1) (BuffIx p2) | p1 <= p2 = True
 btLte a b | btEq a b = True
 btLte SetAll DoIf = True
 btLte SetAll CopyLR = True
 btLte SetAll Absorb = True
+btLte SetAll BuffIx{} = True
 btLte DoIf CopyLR = True
 btLte DoIf Absorb = True
+btLte DoIf BuffIx{} = True
 btLte CopyLR Absorb = True
+btLte CopyLR BuffIx{} = True
+btLte Absorb BuffIx{} = True
 btLte _ _ = False
 
 data CheckTransform where
@@ -199,7 +207,7 @@ filtAsLens gs loc tgt pt Lowest = filtered (liftToCard lowestFilter)
 
 cmtAsFunc :: CardModType -> Int -> Int
 cmtAsFunc (Add x) = (+) x
-cmtAsFunc (Min x) = (-) x
+cmtAsFunc (Min x) = \z -> z - x
 cmtAsFunc (Mod x) = mod x
 cmtAsFunc (Set x) = const x
 
@@ -231,6 +239,7 @@ bttAsFunc Absorb (l, r) cards = case cardsLR of
     mCardL = cards ^? element l
     mCardR = cards ^? element r
     cardsLR = (,) <$> mCardL <*> mCardR
+bttAsFunc (BuffIx props) a cards = cards & element a %~ cardPropFunc props
 
 allTargets :: GameState -> Location -> Target -> PlayerTurn -> [Card]
 allTargets gs loc tgt pt = gs ^. (playerState . tgtAsLens pt tgt . locAsLens loc)
@@ -238,6 +247,7 @@ allTargets gs loc tgt pt = gs ^. (playerState . tgtAsLens pt tgt . locAsLens loc
 average :: Foldable t => t Int -> Int
 average xs = sum xs `div` length xs
 
+cardPropFunc :: CardProps -> Card -> Card
 cardPropFunc (CardProps cmt cct) c = buff (cctAsFunc cct . cmtAsFunc cmt) c
 
 buff f c = case ncFunc (NumberCard . f) c of
@@ -269,7 +279,7 @@ playCard pt c@(CheckAndBuffCard loc tgt) gameState =
                 %~ cardPropFunc (CardProps (Set x) NoCap)
     Nothing -> gameState
   where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
-        avgCardVal = fmap average $ traverse cardVal check
+        avgCardVal = average <$> traverse cardVal check
 playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) gameState =
   gameState & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ transformFunc
   where
@@ -442,8 +452,8 @@ runGameIO = evalRandIO . runWriterT
 testPlayer = PlayerState {_hand = [], _deck = [], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
 testBoard = GameState {_playerState = [testPlayer, testPlayer], _playerTurn = 0, _turnCount = 0}
 
-testPlayer2 = PlayerState {_hand = [], _deck = [NumberCard 1, NumberCard 2, NumberCard 3, NumberCard 4], _board = [NumberCard 1, NumberCard 2, NumberCard 3], _winner = False}
-testBoard2 = GameState {_playerState = [testPlayer2, testPlayer2], _playerTurn = 0, _turnCount = 0}
+testPlayer2 = PlayerState {_hand = [], _deck = [NumberCard 1, NumberCard 2, NumberCard 3, NumberCard 4], _board = [NumberCard 1, NumberCard 2, NumberCard 10], _winner = False}
+testBoard2 = GameState {_playerState = [testPlayer2, testPlayer], _playerTurn = 0, _turnCount = 0}
 
 
 card1 = NumberCard 10
@@ -454,8 +464,11 @@ card5 = CheckTransformCard Board Friendly (CheckTransform LowestHighestIx Absorb
 card6 = CheckTransformCard Board All (CheckTransform AvgCardVal SetAll)
 card7 = BuffCard Deck Friendly NoFilter (CardProps (Add 2) (MaxCap 100))
 card8 = BuffCard Board All NoFilter (CardProps (Set 0) NoCap)
+-- TODO: this card should remove 1 from all integer-valued cards, not only NumberCards
 card9 = BuffCard Deck Enemy NoFilter (CardProps (Min 1) (MinCap 0))
 card10 = Move2ToTop
+card12 = CheckTransformCard Board Friendly (CheckTransform HighestCardIx (BuffIx (CardProps (Add 5) (MaxCap 100))))
+card18 = CheckTransformCard Board All (CheckTransform HighestCardIx (BuffIx (CardProps (Add 10) (MaxCap 100))))
 
 atList :: Int -> Lens' [a] a
 atList n = singular (ix n)
