@@ -40,6 +40,7 @@ import Data.Maybe
 import Data.Foldable
 
 import Control.Lens
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Loops
 import Control.Monad.Writer (MonadWriter(tell),runWriterT)
@@ -68,33 +69,44 @@ data CardProps = CardProps CardModType CardCappingType
 data CardFilter = NoFilter | Lowest
   deriving (Generic, Show, Eq, Ord)
 
+type PlayerTurn = Int
+type TurnBound = Int
+type CardPointer = (PlayerTurn, Location, Int)
+
 data BoardCheckType a where
   AvgCardVal :: BoardCheckType Int
   HighestCardIx :: BoardCheckType Int
   LowestCardIx :: BoardCheckType Int
   LowestHighestIx :: BoardCheckType (Int, Int)
+  HighestCardPtr :: BoardCheckType CardPointer
 
 instance Show (BoardCheckType a) where
   show AvgCardVal = "AvgCardVal"
   show HighestCardIx = "HighestCardIx"
   show LowestCardIx = "LowestCardIx"
   show LowestHighestIx = "LowestHighestIx"
+  show HighestCardPtr = "HighestCardPtr"
 
 bcEq :: BoardCheckType a -> BoardCheckType b -> Bool
 bcEq AvgCardVal AvgCardVal = True
 bcEq HighestCardIx HighestCardIx = True
 bcEq LowestCardIx LowestCardIx = True
 bcEq LowestHighestIx LowestHighestIx = True
+bcEq HighestCardPtr HighestCardPtr = True
 bcEq _ _ = False
 
 bcLte :: BoardCheckType a -> BoardCheckType b -> Bool
 bcLte a b | bcEq a b = True
 bcLte AvgCardVal HighestCardIx = True
-bcLte AvgCardVal LowestHighestIx = True
 bcLte AvgCardVal LowestCardIx = True
-bcLte HighestCardIx LowestHighestIx = True
+bcLte AvgCardVal LowestHighestIx = True
+bcLte AvgCardVal HighestCardPtr = True
 bcLte HighestCardIx LowestCardIx = True
+bcLte HighestCardIx LowestHighestIx = True
+bcLte HighestCardIx HighestCardPtr = True
+bcLte LowestCardIx HighestCardPtr = True
 bcLte LowestCardIx LowestHighestIx = True
+bcLte LowestHighestIx HighestCardPtr = True
 bcLte _ _ = False
 
 data BoardTransformType a where
@@ -103,6 +115,7 @@ data BoardTransformType a where
   CopyLR :: BoardTransformType Int
   Absorb :: BoardTransformType (Int, Int)
   BuffIx :: CardProps -> BoardTransformType Int
+  BuffPtr :: CardProps -> BoardTransformType CardPointer
 
 instance Show (BoardTransformType a) where
   show SetAll = "SetAll"
@@ -110,6 +123,7 @@ instance Show (BoardTransformType a) where
   show CopyLR = "CopyLR"
   show Absorb = "Absorb"
   show (BuffIx props) = "BuffIx " ++ show props
+  show (BuffPtr props) = "BuffPtr" ++ show props
 
 btEq :: BoardTransformType a -> BoardTransformType b -> Bool
 btEq SetAll SetAll = True
@@ -117,21 +131,28 @@ btEq DoIf DoIf = True
 btEq CopyLR CopyLR = True
 btEq Absorb Absorb = True
 btEq (BuffIx p1) (BuffIx p2) | p1 == p2 = True
+btEq (BuffPtr p1) (BuffPtr p2) | p1 == p2 = True
 btEq _ _ = False
 
 btLte :: BoardTransformType a -> BoardTransformType b -> Bool
 btLte (BuffIx p1) (BuffIx p2) | p1 <= p2 = True
+btLte (BuffPtr p1) (BuffPtr p2) | p1 <= p2 = True
 btLte a b | btEq a b = True
 btLte SetAll DoIf = True
 btLte SetAll CopyLR = True
 btLte SetAll Absorb = True
 btLte SetAll BuffIx{} = True
+btLte SetAll BuffPtr{} = True
 btLte DoIf CopyLR = True
 btLte DoIf Absorb = True
 btLte DoIf BuffIx{} = True
+btLte DoIf BuffPtr{} = True
 btLte CopyLR Absorb = True
 btLte CopyLR BuffIx{} = True
+btLte CopyLR BuffPtr{} = True
 btLte Absorb BuffIx{} = True
+btLte Absorb BuffPtr{} = True
+btLte BuffIx{} BuffPtr{} = True
 btLte _ _ = False
 
 data CheckTransform where
@@ -178,9 +199,6 @@ makeLenses ''PlayerState
 
 mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard, _winner = False}
 
-type PlayerTurn = Int
-type TurnBound = Int
-
 data GameState = GameState
   { _playerState :: [PlayerState]
   , _playerTurn :: Int
@@ -216,11 +234,43 @@ cctAsFunc NoCap x = x
 cctAsFunc (MaxCap cap) x = if x > cap then cap else x
 cctAsFunc (MinCap cap) x = if x < cap then cap else x
 
-bctAsFunc :: BoardCheckType a -> [Card] -> Maybe a
-bctAsFunc AvgCardVal cs = average <$> traverse cardVal cs
-bctAsFunc HighestCardIx cs = Just $ lowestCardIndex (>) cs
-bctAsFunc LowestCardIx cs = Just $ lowestCardIndex (<) cs
-bctAsFunc LowestHighestIx cs = (,) <$> bctAsFunc LowestCardIx cs <*> bctAsFunc HighestCardIx cs
+bctAsFunc :: BoardCheckType a -> GameState -> Location -> Target -> PlayerTurn-> Maybe a
+bctAsFunc AvgCardVal gs loc _ pt = average <$> traverse cardVal cs
+   where cs = allTargets gs loc All pt
+bctAsFunc HighestCardIx gs loc tgt pt = Just $ lowestCardIndex (>) cs
+   where cs = allTargets gs loc tgt pt
+bctAsFunc LowestCardIx gs loc tgt pt = Just $ lowestCardIndex (<) cs
+   where cs = allTargets gs loc tgt pt
+bctAsFunc LowestHighestIx gs loc tgt pt = (,) <$> bctAsFunc LowestCardIx gs loc tgt pt <*> bctAsFunc HighestCardIx gs loc tgt pt
+bctAsFunc HighestCardPtr gs loc tgt pt = snd <$> findMaxCard cardInfo
+  --_ $ targetsWithIndex gs loc tgt <$.> allPlayers -- highestCardPlayer gs loc tgt <$.> allPlayers
+  where
+    -- TODO all players should depend on tgt?
+    allPlayers = [0..1]
+    cardInfo =  do
+      pl <- allPlayers
+      (ix, card) <- targetsWithIndex gs loc tgt pl
+      return (card, (pl, loc, ix))
+
+(<$.>) :: (Functor f) => (a -> b) -> f a -> f (a, b)
+(<$.>) f fa = (\a -> (a, f a)) <$> fa
+
+targetsWithIndex :: GameState -> Location -> Target -> PlayerTurn -> [(Int, Card)]
+targetsWithIndex gs loc tgt pt = zipWith (,) [0..] cs
+  where cs = allTargets gs loc tgt pt
+
+findMaxCard :: (Eq a) => [(Card, a)] -> Maybe (Card, a)
+findMaxCard xs = safeFoldableFunc (maximumBy (\(c1,_) (c2,_) -> compare c1 c2)) xs
+
+highestCardPlayer :: GameState -> Location -> Target -> PlayerTurn -> Maybe (Int, Card)
+highestCardPlayer gs loc tgt pt = (safeFoldableFunc $ maximumBy (\(_, mc1) (_, mc2) -> compare mc1 mc2)) csIndexed
+  where
+    cs = allTargets gs loc tgt pt
+    csIndexed = zipWith (,) [0..] cs
+
+safeFoldableFunc :: (Alternative t, Foldable t, Eq (t a)) => (t a -> b) -> t a -> Maybe b
+safeFoldableFunc _ z | z == empty = Nothing
+safeFoldableFunc f xs = Just $ f xs
 
 bttAsFunc :: BoardTransformType a -> a -> [Card] -> [Card]
 bttAsFunc SetAll a cards = map (buff $ cmtAsFunc (Set a)) cards
@@ -283,11 +333,11 @@ playCard pt c@(CheckAndBuffCard loc tgt) gameState =
 playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) gameState =
   gameState & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ transformFunc
   where
-    checkTargets = allTargets gameState loc tgt pt
-    checkValue = bctAsFunc check checkTargets
+    checkValue = bctAsFunc check gameState loc tgt pt
     transformFunc = case checkValue of
       Just a -> bttAsFunc transform a
       Nothing -> id
+
 -- TODO: handle case c1 == c2 differently
 -- TODO: what should happen when only 1 card can be found (currently nothing happens)
 playCard pt (Move2ToTop c1 c2) gameState = case newDeck of
