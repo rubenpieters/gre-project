@@ -6,6 +6,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE FunctionalDependencies #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
 
 module Lib
 {-}  ( GameLog
@@ -80,12 +81,7 @@ data BoardCheckType a where
   LowestHighestIx :: BoardCheckType (Int, Int)
   HighestCardPtr :: BoardCheckType CardPointer
 
-instance Show (BoardCheckType a) where
-  show AvgCardVal = "AvgCardVal"
-  show HighestCardIx = "HighestCardIx"
-  show LowestCardIx = "LowestCardIx"
-  show LowestHighestIx = "LowestHighestIx"
-  show HighestCardPtr = "HighestCardPtr"
+deriving instance Show (BoardCheckType a)
 
 bcEq :: BoardCheckType a -> BoardCheckType b -> Bool
 bcEq AvgCardVal AvgCardVal = True
@@ -117,13 +113,7 @@ data BoardTransformType a where
   BuffIx :: CardProps -> BoardTransformType Int
   BuffPtr :: CardProps -> BoardTransformType CardPointer
 
-instance Show (BoardTransformType a) where
-  show SetAll = "SetAll"
-  show DoIf = "DoIf"
-  show CopyLR = "CopyLR"
-  show Absorb = "Absorb"
-  show (BuffIx props) = "BuffIx " ++ show props
-  show (BuffPtr props) = "BuffPtr" ++ show props
+deriving instance Show (BoardTransformType a)
 
 btEq :: BoardTransformType a -> BoardTransformType b -> Bool
 btEq SetAll SetAll = True
@@ -158,8 +148,7 @@ btLte _ _ = False
 data CheckTransform where
   CheckTransform :: BoardCheckType a -> BoardTransformType a -> CheckTransform
 
-instance Show CheckTransform where
-  show (CheckTransform bct btt) = "CheckTransform " ++ show bct ++ " " ++ show btt
+deriving instance Show CheckTransform
 
 instance Eq CheckTransform where
   (CheckTransform bct1 btt1) == (CheckTransform bct2 btt2) = bcEq bct1 bct2 && btEq btt1 btt2
@@ -167,13 +156,13 @@ instance Eq CheckTransform where
 instance Ord CheckTransform where
   (CheckTransform bct1 btt1) <= (CheckTransform bct2 btt2) = bcLte bct1 bct2 && btLte btt1 btt2
 
-
 data Card =
   NumberCard Int
   | BuffCard Location Target CardFilter CardProps
   | CheckAndBuffCard Location Target
   | CheckTransformCard Location Target CheckTransform
   | Move2ToTop Card Card
+  | ComposedCard Card Card
   | NullCard
   deriving (Generic, Show, Eq, Ord)
 
@@ -234,7 +223,7 @@ cctAsFunc NoCap x = x
 cctAsFunc (MaxCap cap) x = if x > cap then cap else x
 cctAsFunc (MinCap cap) x = if x < cap then cap else x
 
-bctAsFunc :: BoardCheckType a -> GameState -> Location -> Target -> PlayerTurn-> Maybe a
+bctAsFunc :: BoardCheckType a -> GameState -> Location -> Target -> PlayerTurn -> Maybe a
 bctAsFunc AvgCardVal gs loc _ pt = average <$> traverse cardVal cs
    where cs = allTargets gs loc All pt
 bctAsFunc HighestCardIx gs loc tgt pt = Just $ lowestCardIndex (>) cs
@@ -242,21 +231,22 @@ bctAsFunc HighestCardIx gs loc tgt pt = Just $ lowestCardIndex (>) cs
 bctAsFunc LowestCardIx gs loc tgt pt = Just $ lowestCardIndex (<) cs
    where cs = allTargets gs loc tgt pt
 bctAsFunc LowestHighestIx gs loc tgt pt = (,) <$> bctAsFunc LowestCardIx gs loc tgt pt <*> bctAsFunc HighestCardIx gs loc tgt pt
-bctAsFunc HighestCardPtr gs loc tgt pt = snd <$> findMaxCard cardInfo
+bctAsFunc HighestCardPtr gs loc _ _ = snd <$> findMaxCard cardInfo
   --_ $ targetsWithIndex gs loc tgt <$.> allPlayers -- highestCardPlayer gs loc tgt <$.> allPlayers
   where
     -- TODO all players should depend on tgt?
     allPlayers = [0..1]
     cardInfo =  do
       pl <- allPlayers
-      (ix, card) <- targetsWithIndex gs loc tgt pl
+      -- Friendly to target only the cards of this player
+      (ix, card) <- targetsWithIndex gs loc Friendly pl
       return (card, (pl, loc, ix))
 
 (<$.>) :: (Functor f) => (a -> b) -> f a -> f (a, b)
 (<$.>) f fa = (\a -> (a, f a)) <$> fa
 
 targetsWithIndex :: GameState -> Location -> Target -> PlayerTurn -> [(Int, Card)]
-targetsWithIndex gs loc tgt pt = zipWith (,) [0..] cs
+targetsWithIndex gs loc tgt pt = zip [0..] cs
   where cs = allTargets gs loc tgt pt
 
 findMaxCard :: (Eq a) => [(Card, a)] -> Maybe (Card, a)
@@ -266,30 +256,37 @@ highestCardPlayer :: GameState -> Location -> Target -> PlayerTurn -> Maybe (Int
 highestCardPlayer gs loc tgt pt = (safeFoldableFunc $ maximumBy (\(_, mc1) (_, mc2) -> compare mc1 mc2)) csIndexed
   where
     cs = allTargets gs loc tgt pt
-    csIndexed = zipWith (,) [0..] cs
+    csIndexed = zip [0..] cs
 
 safeFoldableFunc :: (Alternative t, Foldable t, Eq (t a)) => (t a -> b) -> t a -> Maybe b
 safeFoldableFunc _ z | z == empty = Nothing
 safeFoldableFunc f xs = Just $ f xs
 
-bttAsFunc :: BoardTransformType a -> a -> [Card] -> [Card]
-bttAsFunc SetAll a cards = map (buff $ cmtAsFunc (Set a)) cards
-bttAsFunc CopyLR a cards = case value of
+bttAsFunc :: BoardTransformType a -> a -> Location -> Target -> PlayerTurn -> GameState -> GameState
+bttAsFunc SetAll a loc tgt pt gs = transformCards gs loc tgt pt $ \cards -> map (buff $ cmtAsFunc (Set a)) cards
+bttAsFunc CopyLR a loc tgt pt gs = transformCards gs loc tgt pt $ \cards ->
+  let value = cards ^? element a in
+  case value of
   Just x -> cards & element (a-1) .~ x
                   & element (a+1) .~ x
   Nothing -> cards
-  where
-    value = cards ^? element a
-bttAsFunc Absorb (l, r) cards = case cardsLR of
+bttAsFunc Absorb (l, r) loc tgt pt gs = transformCards gs loc tgt pt $ \cards ->
+  let
+    mCardL = cards ^? element l
+    mCardR = cards ^? element r
+    cardsLR = (,) <$> mCardL <*> mCardR
+  in
+  case cardsLR of
   -- TODO: add capping
   Just (cardL, _) -> cards & element l %~ buff (const 0)
                            & element r %~ buff (maybeNc 0 cardL + )
   Nothing -> cards
-  where
-    mCardL = cards ^? element l
-    mCardR = cards ^? element r
-    cardsLR = (,) <$> mCardL <*> mCardR
-bttAsFunc (BuffIx props) a cards = cards & element a %~ cardPropFunc props
+bttAsFunc (BuffIx props) a loc tgt pt gs = transformCards gs loc tgt pt $ \cards -> cards & element a %~ cardPropFunc props
+-- tgt is Friendly because we need to target the player `pt`
+bttAsFunc (BuffPtr props) (pt, loc, i) _ tgt _ gs = gs & (playerState . tgtAsLens pt Friendly . locAsLens loc . element i) %~ cardPropFunc props
+
+--transformCards :: GameState -> Location -> Target -> PlayerTurn -> GameState
+transformCards gs loc tgt pt f = gs & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ f
 
 allTargets :: GameState -> Location -> Target -> PlayerTurn -> [Card]
 allTargets gs loc tgt pt = gs ^. (playerState . tgtAsLens pt tgt . locAsLens loc)
@@ -331,11 +328,11 @@ playCard pt c@(CheckAndBuffCard loc tgt) gameState =
   where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
         avgCardVal = average <$> traverse cardVal check
 playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) gameState =
-  gameState & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ transformFunc
+  transformFunc gameState
   where
     checkValue = bctAsFunc check gameState loc tgt pt
     transformFunc = case checkValue of
-      Just a -> bttAsFunc transform a
+      Just a -> bttAsFunc transform a loc tgt pt
       Nothing -> id
 
 -- TODO: handle case c1 == c2 differently
@@ -349,6 +346,8 @@ playCard pt (Move2ToTop c1 c2) gameState = case newDeck of
       i1 <- findIndexStartingFrom 0 c1 deck
       i2 <- findIndexStartingFrom 0 c2 deck
       return $ [deck !! i1, deck !! i2] ++ exceptIndices deck [i1, i2]
+playCard pt (ComposedCard c1 c2) gameState =
+  playCard pt c2 $ playCard pt c1 gameState
 
 findIndexStartingFrom :: (Eq a) => Int -> a -> [a] -> Maybe Int
 findIndexStartingFrom start a l = findIndex (a ==) (drop start l)
@@ -518,7 +517,10 @@ card8 = BuffCard Board All NoFilter (CardProps (Set 0) NoCap)
 card9 = BuffCard Deck Enemy NoFilter (CardProps (Min 1) (MinCap 0))
 card10 = Move2ToTop
 card12 = CheckTransformCard Board Friendly (CheckTransform HighestCardIx (BuffIx (CardProps (Add 5) (MaxCap 100))))
-card18 = CheckTransformCard Board All (CheckTransform HighestCardIx (BuffIx (CardProps (Add 10) (MaxCap 100))))
+card17_addFriendly = BuffCard Board Friendly NoFilter (CardProps (Add 1) (MaxCap 100))
+card17_dmgEnemy = BuffCard Board Enemy NoFilter (CardProps (Min 1) (MinCap 0))
+card17 = ComposedCard card17_addFriendly card17_dmgEnemy
+card18 = CheckTransformCard Board All (CheckTransform HighestCardPtr (BuffPtr (CardProps (Add 10) (MaxCap 100))))
 
 atList :: Int -> Lens' [a] a
 atList n = singular (ix n)
