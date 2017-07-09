@@ -23,6 +23,7 @@ library
                      , random-shuffle
                      , MonadRandom
                      , monad-loops
+                     , derive-het
   ghc-options:         -Wall
   default-language:    Haskell2010
 
