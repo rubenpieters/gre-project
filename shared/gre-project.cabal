@@ -36,6 +36,7 @@ executable gre-project
                      , random-shuffle
                      , MonadRandom
                      , monad-loops
+                     , derive-het
 
 test-suite spec
   type:
