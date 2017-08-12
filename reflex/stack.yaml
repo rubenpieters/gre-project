@@ -5,12 +5,17 @@ flags: {}
 packages:
 - '.'
 - ../shared
+- location:
+    git: git@github.com:rubenpieters/derive-het.git
+    commit: fad1f88b26a178ae4990e7f88d89da53e8ce724c
+  extra-dep: true
 
 extra-deps:
   - ghcjs-dom-0.2.4.0
   - reflex-0.4.0
   - reflex-dom-0.3
   - ref-tf-0.4.0.1
+  - derive-het-0.1.0.0
 
 extra-package-dbs: []
 resolver: lts-7.19

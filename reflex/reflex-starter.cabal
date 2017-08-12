@@ -26,6 +26,7 @@ executable reflex-starter
                      , mtl
                      , MonadRandom
                      , gre-project
+                     , lens
   default-language:    Haskell2010
 
 source-repository head

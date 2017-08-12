@@ -34,6 +34,8 @@ module Lib
   )-}
   where
 
+import GameResult
+
 import System.Random.Shuffle
 
 import Data.List
@@ -51,7 +53,7 @@ import Control.Monad.Random
 
 import GHC.Generics
 
-data GameLog = GameLog String
+data GameLog = GameLog String | PlayerLog Int String
   deriving (Generic, Show)
 
 data Location = Board | Hand | Deck
@@ -85,8 +87,13 @@ data BoardCheckType a where
   LowestCardIx :: BoardCheckType Int
   LowestHighestIx :: BoardCheckType (Int, Int)
   HighestCardPtr :: BoardCheckType CardPointer
+  Lowest3CardPtr :: BoardCheckType (CardPointer, CardPointer, CardPointer)
+  HasHighestBoardCard :: BoardCheckType Bool
+  HasDifferentBoardCards :: BoardCheckType Bool
 
 deriving instance Show (BoardCheckType a)
+deriving instance Eq (BoardCheckType a)
+deriving instance Ord (BoardCheckType a)
 
 genHetCmp ''BoardCheckType
 genHetEq ''BoardCheckType
@@ -99,6 +106,7 @@ data BoardTransformType a where
   Absorb :: BoardTransformType (Int, Int)
   BuffIx :: CardProps -> BoardTransformType Int
   BuffPtr :: CardProps -> BoardTransformType CardPointer
+  Merge3 :: BoardTransformType (CardPointer, CardPointer, CardPointer)
 
 deriving instance Show (BoardTransformType a)
 
@@ -124,6 +132,9 @@ data Card =
   | CheckTransformCard Location Target CheckTransform
   | Move2ToTop Card Card
   | ComposedCard Card Card
+  | GuardedCard Location Target (BoardCheckType Bool) Card
+  | PlayTop2
+  | PutOnTop Target Card
   | NullCard
   deriving (Generic, Show, Eq, Ord)
 
@@ -147,7 +158,7 @@ instance Show PlayerState where
 
 makeLenses ''PlayerState
 
-mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 NullCard, _winner = False}
+mkPlayer d = PlayerState {_hand = [], _deck = d, _board = replicate 7 (NumberCard 0), _winner = False}
 
 data GameState = GameState
   { _playerState :: [PlayerState]
@@ -157,6 +168,8 @@ data GameState = GameState
   deriving (Eq, Show)
 
 makeLenses ''GameState
+
+mkGameState p1 p2 = GameState {_playerState = [p1, p2], _playerTurn = 0, _turnCount = 0}
 
 locAsLens Board = board
 locAsLens Hand = hand
@@ -190,6 +203,7 @@ cctAsFunc NoCap x = x
 cctAsFunc (MaxCap cap) x = if x > cap then cap else x
 cctAsFunc (MinCap cap) x = if x < cap then cap else x
 
+-- TODO: resolve ties with rng?
 bctAsFunc :: BoardCheckType a -> GameState -> Location -> Target -> PlayerTurn -> Maybe a
 bctAsFunc AvgCardVal gs loc _ pt = average <$> traverse cardVal cs
    where cs = allTargets gs loc All pt
@@ -199,15 +213,42 @@ bctAsFunc LowestCardIx gs loc tgt pt = Just $ lowestCardIndex (<) cs
    where cs = allTargets gs loc tgt pt
 bctAsFunc LowestHighestIx gs loc tgt pt = (,) <$> bctAsFunc LowestCardIx gs loc tgt pt <*> bctAsFunc HighestCardIx gs loc tgt pt
 bctAsFunc HighestCardPtr gs loc _ _ = snd <$> findMaxCard cardInfo
-  --_ $ targetsWithIndex gs loc tgt <$.> allPlayers -- highestCardPlayer gs loc tgt <$.> allPlayers
   where
     -- TODO all players should depend on tgt?
     allPlayers = [0..1]
     cardInfo =  do
       pl <- allPlayers
-      -- Friendly to target only the cards of this player
       (ix, card) <- targetsWithIndex gs loc Friendly pl
       return (card, (pl, loc, ix))
+bctAsFunc Lowest3CardPtr gs loc _ _ = f lowest3
+  where
+    allPlayers = [0..1]
+    cardInfo = do
+      pl <- allPlayers
+      (ix, card) <- targetsWithIndex gs loc Friendly pl
+      return (card, (pl, loc, ix))
+    lowest3 = take 3 $ sortBy compareFst cardInfo
+    f [(_, p1), (_, p2), (_, p3)] = Just (p1, p2, p3)
+    f _ = Nothing
+bctAsFunc HasHighestBoardCard gs loc tgt pt =
+  -- should use diff pt if tgt == Enemy
+  Just $ elem pt (snd <$> onlyMaxCards)
+  where
+    allPlayers = [0..1]
+    cardInfo = do
+      pl <- allPlayers
+      (ix, card) <- targetsWithIndex gs loc Friendly pl
+      return (card, pl)
+    onlyMaxCards = keepMaxOnly fst cardInfo
+bctAsFunc HasDifferentBoardCards gs loc tgt pt = Just $ length (nub cs) /= 1
+  where
+    cs = allTargets gs loc tgt pt
+
+keepMaxOnly :: (Ord b) => (a -> b) -> [a] -> [a]
+keepMaxOnly f l = filter (\x -> f x == maximum (f <$> l)) l
+
+compareFst :: (Ord a) => (a, b) -> (a, c) -> Ordering
+compareFst (a, _) (b, _) = compare a b
 
 (<$.>) :: (Functor f) => (a -> b) -> f a -> f (a, b)
 (<$.>) f fa = (\a -> (a, f a)) <$> fa
@@ -218,6 +259,9 @@ targetsWithIndex gs loc tgt pt = zip [0..] cs
 
 findMaxCard :: (Eq a) => [(Card, a)] -> Maybe (Card, a)
 findMaxCard xs = safeFoldableFunc (maximumBy (\(c1,_) (c2,_) -> compare c1 c2)) xs
+
+findMinCard :: (Eq a) => [(Card, a)] -> Maybe (Card, a)
+findMinCard xs = safeFoldableFunc (minimumBy (\(c1,_) (c2,_) -> compare c1 c2)) xs
 
 highestCardPlayer :: GameState -> Location -> Target -> PlayerTurn -> Maybe (Int, Card)
 highestCardPlayer gs loc tgt pt = (safeFoldableFunc $ maximumBy (\(_, mc1) (_, mc2) -> compare mc1 mc2)) csIndexed
@@ -253,6 +297,24 @@ bttAsFunc (BuffIx props) a loc tgt pt gs = transformCardsM gs loc tgt pt $ \card
 -- tgt is Friendly because we need to target the player `pt`
 bttAsFunc (BuffPtr props) (pt, loc, i) _ tgt _ gs = mapMOf (playerState . tgtAsLens pt Friendly . locAsLens loc . element i) (cardPropFunc props) gs
   --gs & (playerState . tgtAsLens pt Friendly . locAsLens loc . element i) %~ cardPropFunc props
+bttAsFunc Merge3 (ptr1, ptr2, ptr3) _ _ _ gs = do
+    gs1 <- mapMOf (cardPointerLens ptr1) (cardPropFunc $ CardProps (Set 0) NoCap NoRange) gs
+    gs2 <- mapMOf (cardPointerLens ptr2) (cardPropFunc $ CardProps (Set 0) NoCap NoRange) gs1
+    gs3 <- mapMOf (cardPointerLens ptr3) (cardPropFunc $ CardProps (Set 0) NoCap NoRange) gs2
+    mapMOf (cardPointerLens minCardPtr) (cardPropFunc $ CardProps (Set total) (MaxCap 100) NoRange) gs3
+  where
+    card1 = viewCard gs ptr1
+    card2 = viewCard gs ptr2
+    card3 = viewCard gs ptr3
+    (_, minCardPtr) = fromMaybe (error "empty list in minCard") $ findMinCard [(card1, ptr1), (card2, ptr2), (card3, ptr3)]
+    total = sum (cardVal0 <$> [card1, card2, card3])
+
+cardPointerLens (pt, loc, i) = playerState . tgtAsLens pt Friendly . locAsLens loc . element i
+
+viewCard :: GameState -> CardPointer -> Card
+viewCard gs ptr = fromMaybe (error "invalid pointer") maybeCard
+  where
+    maybeCard = gs ^? cardPointerLens ptr
 
 --transformCards :: GameState -> Location -> Target -> PlayerTurn -> GameState
 transformCards gs loc tgt pt f = gs & (playerState . tgtAsLens pt tgt . locAsLens loc) %~ f
@@ -280,6 +342,10 @@ buffM f c = case ncFunc (liftM NumberCard . f) c of
   Just c' -> c'
   Nothing -> return c
 
+cardVal0 :: Card -> Int
+cardVal0 = (fromMaybe 0) . cardVal
+
+cardVal :: Card -> Maybe Int
 cardVal c = ncFunc id c
 
 maybeNc :: Int -> Card -> Int
@@ -296,7 +362,7 @@ playCard pt c@NumberCard{} gameState = return $
   gameState & (playerState . element pt . board . element (lowestCardIndex (<) playerBoard)) .~ c
   where playerBoard = gameState ^. (playerState . element pt . board)
   --toReplaceSpot = playerBoard & (element (lowestCardIndex playerBoard))
-playCard pt (BuffCard loc tgt filt cardProps) gameState = 
+playCard pt (BuffCard loc tgt filt cardProps) gameState =
   mapMOf (playerState . tgtAsLens pt tgt . locAsLens loc . traverse . filtAsLens gameState loc tgt pt filt) (cardPropFunc cardProps) gameState
 playCard _ NullCard gameState = return gameState
 playCard pt c@(CheckAndBuffCard loc tgt) gameState =
@@ -305,7 +371,7 @@ playCard pt c@(CheckAndBuffCard loc tgt) gameState =
                 (cardPropFunc (CardProps (Set x) NoCap NoRange)) gameState
     Nothing -> return gameState
   where check = gameState ^.. (playerState . tgtAsLens pt tgt . locAsLens loc . traverse)
-        avgCardVal = average <$> traverse cardVal check 
+        avgCardVal = average <$> traverse cardVal check
 playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) gameState =
   transformFunc gameState
   where
@@ -313,7 +379,6 @@ playCard pt c@(CheckTransformCard loc tgt (CheckTransform check transform)) game
     transformFunc = case checkValue of
       Just a -> bttAsFunc transform a loc tgt pt
       Nothing -> return
-
 -- TODO: handle case c1 == c2 differently
 -- TODO: what should happen when only 1 card can be found (currently nothing happens)
 playCard pt (Move2ToTop c1 c2) gameState = return $ case newDeck of
@@ -328,6 +393,17 @@ playCard pt (Move2ToTop c1 c2) gameState = return $ case newDeck of
 playCard pt (ComposedCard c1 c2) gameState = do
   gs' <- playCard pt c1 gameState
   playCard pt c2 gs'
+-- TODO: disallow chaining, disintegrate PlayTop2 if chained
+playCard pt PlayTop2 gs = executeTurnTop2 pt gs >>= executeTurnTop2 pt
+playCard pt (GuardedCard loc tgt bct c) gs = do
+  let check = bctAsFunc bct gs loc tgt pt
+  if fromMaybe False check
+    then do
+      -- TODO: find card in deck (and remove it) and only play if found
+      playCard pt c gs
+    else return gs
+playCard pt (PutOnTop tgt c) gs =
+  return $ gs & (playerState . tgtAsLens pt tgt . locAsLens Deck) %~ (c :)
 
 findIndexStartingFrom :: (Eq a) => Int -> a -> [a] -> Maybe Int
 findIndexStartingFrom start a l = findIndex (a ==) (drop start l)
@@ -337,8 +413,6 @@ exceptIndex l i = l ^.. (folded . ifiltered (\i' _ -> i' /= i))
 
 exceptIndices :: (Foldable f) => f a -> [Int] -> [a]
 exceptIndices l i = l ^.. (folded . ifiltered (\i' _ -> not $ elem i' i))
-
-
 
 -- boards are technically not supposed to be empty
 -- but it still gives us index `0` if we would pass it an empty list as board
@@ -363,9 +437,23 @@ discardCard :: PlayerState -> PlayerState
 discardCard ps@PlayerState {_hand = []} = ps
 discardCard ps@PlayerState {_hand = (_:h)} = ps & hand .~ h
 
+executeTurnTop2 :: (MonadRandom m) => PlayerTurn -> GameState -> m GameState
+executeTurnTop2 pt gameState = do
+  afterPlayCard <- play maybeCardToPlay afterDrawCard
+  return $ afterDiscardCard afterPlayCard
+  where
+    afterDrawCard = gameState & (playerState . element pt) %~ drawCard
+    maybeCardToPlay :: Maybe Card
+    maybeCardToPlay = afterDrawCard ^? (playerState . element pt . hand . element 0)
+    play :: (MonadRandom m) => Maybe Card -> GameState -> m GameState
+    play (Just PlayTop2) gs = return gs
+    play (Just c) gs = playCard pt c gs
+    play Nothing gs = return gs
+    afterDiscardCard gs = gs & (playerState . element pt) %~ discardCard
+
 executeTurn :: (MonadWriter [GameLog] m, MonadRandom m) => PlayerTurn -> GameState -> m GameState
 executeTurn pt gameState = do
-  tell [GameLog ("Player " ++ (show pt) ++ " Playing " ++ (show maybeCardToPlay))]
+  tell [PlayerLog pt (" Playing " ++ show maybeCardToPlay)]
   afterPlayCard <- play maybeCardToPlay afterDrawCard
   return $ afterDiscardCard afterPlayCard
   where
@@ -383,7 +471,7 @@ advancePlayerTurn bound current =
   then 0
   else candidate
   where
-  candidate = current + 1
+    candidate = current + 1
 
 checkWinCon :: PlayerState -> PlayerState
 checkWinCon ps@PlayerState {_board = b} =
@@ -391,13 +479,15 @@ checkWinCon ps@PlayerState {_board = b} =
   then ps & winner .~ True
   else ps
   where
-  cardWinCon (NumberCard 100) = True
-  cardWinCon _ = False
+    cardWinCon (NumberCard 100) = True
+    cardWinCon _ = False
 
 advanceGame :: (MonadWriter [GameLog] m, MonadRandom m) => TurnBound -> GameState -> m GameState
 advanceGame bound gameState = do
-  nextGameState <- executeTurn (_playerTurn gameState) gameState
+  nextGameState <- executeTurn pt gameState
+  tell [PlayerLog pt (prettyBoard nextGameState pt)]
   return $ advanceTurn bound nextGameState
+    where pt = _playerTurn gameState
 
 advanceTurn :: TurnBound -> GameState -> GameState
 advanceTurn bound gameState = if any _winner (_playerState gameState)
@@ -419,54 +509,41 @@ randomPermutations l = do
   y <- randomPermutations l
   return (x ++ y)
 
-player1 = mkPlayer deck3
-player2 = mkPlayer deck3
+playTillLastState :: (MonadWriter [GameLog] m, MonadRandom m) => Deck -> Deck -> m GameState
+playTillLastState d1 d2 = do
+  -- need to advance by 1 step to get winner state to true
+  -- maybe should change stop cond instead?
+  lastState >>= advanceGame 1
+  where
+    gs = mkGameState (mkPlayer d1) (mkPlayer d2)
+    lastState = iterateUntilM stopCond (advanceGame 1) gs
 
-testGame = GameState {_playerState = [player1, player2], _playerTurn = 0, _turnCount = 0}
+createGameResult :: GameState -> GameResult
+createGameResult gs = GameResult (gs ^.. playerState . traverse . winner) (gs ^. turnCount)
 
-testGame2 :: (MonadWriter [GameLog] m, MonadRandom m) => m (Int, [Bool])
-testGame2 = do
-  deckP1 <- shuffleM deck2
-  deckP2 <- shuffleM deck2
-  let lastState = playFunc deckP1 deckP2
---  states' <- states
---  let lastState = last states'
-  nextState <- lastState >>= advanceGame 1
-  return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
-
-testGame' :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m (Int, [Bool])
-testGame' deckP1' deckP2' = do
+playGame :: (MonadWriter [GameLog] m, MonadRandom m) =>
+            Deck -> Deck -> m GameResult
+playGame deckP1' deckP2' = do
   tell [GameLog "--- Starting Game ---"]
   deckP1 <- shuffleM deckP1'
   deckP2 <- shuffleM deckP2'
-  let lastState = playFunc deckP1 deckP2
---  states' <- states
---  let lastState = last states'
-  nextState <- lastState >>= advanceGame 1
-  return (nextState ^. turnCount, nextState ^.. playerState . traverse . winner)
+  lastState <- playTillLastState deckP1 deckP2
+  return $ createGameResult lastState
 
-playXTimes :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> Int -> m (Int, Int)
-playXTimes deckP1 deckP2 times = fmap (foldr winnerCounting (0, 0)) replicated
+playMatch :: (MonadWriter [GameLog] m, MonadRandom m) =>
+             Deck -> Deck -> Int -> m MatchResult
+playMatch deckP1 deckP2 times = aggregateGameResults <$> replicated
   where
-    replicated = replicateM times (testGame' deckP1 deckP2)
-    winnerCounting (_, [p1, p2]) (x, y) = (x + add p1, y + add p2)
-    winnerCounting _ _ = error "less/more than 2 players not supported yet"
-    add b = if b then 1 else 0
+    replicated :: (MonadWriter [GameLog] m, MonadRandom m) =>
+                  m [GameResult]
+    replicated = replicateM times (playGame deckP1 deckP2)
 
 --turns :: (MonadWriter [GameLog] m, MonadRandom m) => m [GameState]
 --turns = iterateM (advanceGame 1) testGame
 
-playUntilWinner :: (MonadWriter [GameLog] m, MonadRandom m) => m GameState
-playUntilWinner = do
-  iterateUntilM (\gs -> any _winner (gs ^. playerState)) (advanceGame 1) testGame
-
-playFunc :: (MonadWriter [GameLog] m, MonadRandom m) => [Card] -> [Card] -> m GameState
-playFunc d1 d2 = do
-  allStates
-  where
-    pl1 = mkPlayer d1
-    pl2 = mkPlayer d2
-    allStates = iterateUntilM stopCond (advanceGame 1) GameState {_playerState = [pl1, pl2], _playerTurn = 0, _turnCount = 0}
+--playUntilWinner :: (MonadWriter [GameLog] m, MonadRandom m) => m GameState
+--playUntilWinner = do
+--  iterateUntilM (\gs -> any _winner (gs ^. playerState)) (advanceGame 1) testGame
 
 playCond :: GameState -> Bool
 playCond gs = none _winner (gs ^. playerState) && (gs ^. turnCount) < 1000
@@ -484,6 +561,28 @@ testBoard = GameState {_playerState = [testPlayer, testPlayer], _playerTurn = 0,
 testPlayer2 = PlayerState {_hand = [], _deck = [NumberCard 1, NumberCard 2, NumberCard 3, NumberCard 4], _board = [NumberCard 1, NumberCard 2, NumberCard 10], _winner = False}
 testBoard2 = GameState {_playerState = [testPlayer2, testPlayer], _playerTurn = 0, _turnCount = 0}
 
+prettyBoard :: GameState -> PlayerTurn -> String
+prettyBoard gs pt = unwords (prettyCard <$> b)
+  where
+    b = gs ^. playerState . element pt . board
+    prettyCard = maybe "#" show . cardVal
+
+mDeck1 =
+  replicate 1000 card3
+
+mDeck2 =
+  replicate 1000 card14
+  ++ replicate 500 card18
+  ++ replicate 1000 card12
+  ++ replicate 1000 card4
+  ++ replicate 500 (card10 card14 card12)
+
+x pt = (filter specificPlayer . snd) <$> (runGameIO $ playGame mDeck1 mDeck2)
+  where
+    specificPlayer GameLog{} = True
+    specificPlayer (PlayerLog pt' _) | pt' == pt = True
+    specificPlayer PlayerLog{} = False
+
 
 card1 = NumberCard 10
 card2 = BuffCard Board All Lowest (CardProps (Add 5) (MaxCap 100) NoRange)
@@ -497,11 +596,16 @@ card8 = BuffCard Board All NoFilter (CardProps (Set 0) NoCap NoRange)
 card9 = BuffCard Deck Enemy NoFilter (CardProps (Min 1) (MinCap 0) NoRange)
 card10 = Move2ToTop
 card11 = BuffCard Board All NoFilter (CardProps (Add 0) (MaxCap 100) (RangeMinPlus 1 10))
-card12 = CheckTransformCard Board Friendly (CheckTransform HighestCardIx (BuffIx (CardProps (Add 5) (MaxCap 100) NoRange)))
+card12 = CheckTransformCard Board Friendly (CheckTransform HighestCardIx (BuffIx (CardProps (Add 20) (MaxCap 100) NoRange)))
+card13 = CheckTransformCard Board All (CheckTransform Lowest3CardPtr Merge3)
+card14 = PlayTop2
+card15 = GuardedCard Board Friendly HasHighestBoardCard
+card16 = GuardedCard Board Friendly HasDifferentBoardCards
 card17_addFriendly = BuffCard Board Friendly NoFilter (CardProps (Add 1) (MaxCap 100) NoRange)
 card17_dmgEnemy = BuffCard Board Enemy NoFilter (CardProps (Min 1) (MinCap 0) NoRange)
 card17 = ComposedCard card17_addFriendly card17_dmgEnemy
 card18 = CheckTransformCard Board All (CheckTransform HighestCardPtr (BuffPtr (CardProps (Add 10) (MaxCap 100) NoRange)))
+card19 = PutOnTop Enemy
 
 atList :: Int -> Lens' [a] a
 atList n = singular (ix n)

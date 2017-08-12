@@ -1,3 +1,4 @@
+{-# LANGUAGE FlexibleInstances #-}
 module LibSpec (main, spec) where
 
 import Test.Hspec
@@ -27,6 +28,11 @@ instance Arbitrary CardProps where
 
 instance Arbitrary CardFilter where
   arbitrary = genericArbitrary' Z uniform
+
+instance Arbitrary (BoardCheckType Bool) where
+  arbitrary = oneof [return HasHighestBoardCard
+                    , return HasDifferentBoardCards
+                    ]
 
 instance Arbitrary Card where
   arbitrary = genericArbitrary' Z uniform
@@ -131,4 +137,24 @@ spec = do
     it "should work in basic case" $ do
       newBoard <- playCard 0 card12 testGS_Board123
       newBoard `shouldBe` (testGS_Board123 & (playerState . element 0 . board . element 2) .~ NumberCard 8)
-
+  describe "card13" $ do
+    it "should work in basic case" $ do
+      let gs = testGS_B1B2 (map NumberCard [1,2,2,2]) (map NumberCard [1,1,2,2])
+      newBoard <- playCard 0 card13 gs
+      newBoard ^.. playerState . element 0 . board . traverse `shouldBe` map NumberCard [3,2,2,2]
+      newBoard ^.. playerState . element 1 . board . traverse `shouldBe` map NumberCard [0,0,2,2]
+  describe "card14" $ do
+    it "should work in basic case" $ do
+      let gs = testGS_D1D2 (map NumberCard [2,3,4]) []
+      newBoard <- playCard 0 card14 gs
+      newBoard ^.. playerState . element 0 . board . traverse `shouldBe` [NumberCard 3]
+      newBoard ^.. playerState . element 0 . deck . traverse `shouldBe` [NumberCard 4]
+  describe "card15" $ do
+    it "should work in basic case" $ do
+      let gs = testGS_B1B2 (map NumberCard [1,2]) (map NumberCard [1,1])
+      newBoard <- playCard 0 (card15 (NumberCard 5)) gs
+      newBoard ^.. playerState . element 0 . board . traverse `shouldBe` map NumberCard [5,2]
+    it "should work when condition doesn't hold" $ do
+      let gs = testGS_B1B2 (map NumberCard [1,1]) (map NumberCard [1,2])
+      newBoard <- playCard 0 (card15 (NumberCard 5)) gs
+      newBoard ^.. playerState . element 0 . board . traverse `shouldBe` map NumberCard [1,1]
