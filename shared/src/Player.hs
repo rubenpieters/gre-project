@@ -6,6 +6,7 @@ module Player
   where
 
 import Data.Maybe
+import Data.List
 
 import Control.Lens hiding (view)
 import Control.Lens.Cons
@@ -28,9 +29,17 @@ data Player = Player
 makeLenses ''Player
 
 drawPlayer :: Player -> String
-drawPlayer p = drawDeck pDeck
-  where
-    pDeck = _deck p
+drawPlayer p =
+  drawDeck (_deck p)
+  ++ "\n"
+  ++ "timers:\n"
+  ++ "L:" ++ intercalate "|" (drawTimer <$> _timersL p)
+  ++ "\n"
+  ++ "M:" ++ intercalate "|" (drawTimer <$> _timersM p)
+  ++ "\n"
+  ++ "R:" ++ intercalate "|" (drawTimer <$> _timersR p)
+  ++ "\n"
+  ++ "DPS:" ++ show (_dps p)
 
 colToTimer :: DeckColumn -> Lens' Player [Timer]
 colToTimer L = timersL
@@ -45,12 +54,12 @@ colToFront R = deck . frontR
 type HandIx = Int
 
 testDeck = Deck
-  { _frontL = [dmgCard, dmgCard]
-  , _frontM = [dmgCard, dmgCard]
-  , _frontR = [dmgCard, dmgCard]
-  , _backL = [dmgCard, dmgCard]
-  , _backM = [dmgCard, dmgCard]
-  , _backR = [dmgCard, dmgCard]
+  { _frontL = [dmg11Card, dmg11Card]
+  , _frontM = [dmg11Card, dmg11Card]
+  , _frontR = [dmg11Card, dmg11Card]
+  , _backL = [dmg11Card, dmg11Card]
+  , _backM = [dmg11Card, dmg11Card]
+  , _backR = [dmg11Card, dmg11Card]
   }
 
 testPlayer' = Player
@@ -63,12 +72,12 @@ testPlayer' = Player
 }
 
 dummyDeck = Deck
-  { _frontL = []
-  , _frontM = []
-  , _frontR = []
-  , _backL = []
-  , _backM = []
-  , _backR = []
+  { _frontL = [focusCard]
+  , _frontM = [focusCard]
+  , _frontR = [focusCard]
+  , _backL = [focusCard]
+  , _backM = [focusCard]
+  , _backR = [focusCard]
   }
 dummyPlayer = Player
   { _deck = dummyDeck
@@ -82,17 +91,18 @@ dummyPlayer = Player
 drawPhase :: Player -> Player
 drawPhase p = p6 & hand %~ (catMaybes l' ++)
   where
-    (c1, p1) = setAndReturn p ht (deck . frontL)
-    (c2, p2) = setAndReturn p1 ht (deck . frontM)
-    (c3, p3) = setAndReturn p2 ht (deck . frontR)
-    (c4, p4) = setAndReturn p3 ht (deck . backL)
-    (c5, p5) = setAndReturn p4 ht (deck . backM)
-    (c6, p6) = setAndReturn p5 ht (deck . backR)
+    (c1, p1) = p & (deck . frontL) %%~ ht
+    (c2, p2) = p1 & (deck . frontM) %%~ ht
+    (c3, p3) = p2 & (deck . frontR) %%~ ht
+    (c4, p4) = p3 & (deck . backL) %%~ ht
+    (c5, p5) = p4 & (deck . backM) %%~ ht
+    (c6, p6) = p5 & (deck . backR) %%~ ht
     l = zip [c1, c2, c3, c4, c5, c6] [(F, L), (F, M), (F, R), (B, L), (B, M), (B, R)]
     l' = seqTM <$> l
 
 wardPhase :: Player -> Player
-wardPhase p = p & deck . frontL %~ (++ cards (F, L))
+wardPhase p = p & hand .~ []
+                & deck . frontL %~ (++ cards (F, L))
                 & deck . frontM %~ (++ cards (F, M))
                 & deck . frontR %~ (++ cards (F, R))
                 & deck . backL %~ (++ cards (B, L))
@@ -101,13 +111,11 @@ wardPhase p = p & deck . frontL %~ (++ cards (F, L))
   where
     cards loc = fst <$> filter ((== loc) . snd) (p ^. hand)
 
+-- [(1,2),(2,3),(3,4)] & traverse . _2 %~ (== 2)
+
 seqTM :: (Maybe a, b) -> Maybe (a, b)
 seqTM (Just a, b) = Just (a, b)
 seqTM (Nothing, _) = Nothing
-
-setAndReturn :: s -> (x -> (t, x)) -> Lens' s x -> (t, s)
-setAndReturn a f l = (x, a & l .~ y)
-  where (x, y) = f (a ^. l)
 
 ht :: [a] -> (Maybe a, [a])
 ht [] = (Nothing, [])

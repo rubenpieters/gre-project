@@ -12,8 +12,11 @@ import Deck
 
 type Hand = [(Card, DeckPos)]
 
-drawHand :: Hand -> String
-drawHand h = intercalate "\n" $
+drawCards :: [Card] -> String
+drawCards cs = intercalate "\n" $
   foldr (\c [t, m, b] ->
   [t ++ "+-+", m ++ "|" ++ drawCard c ++ "|", b ++ "+-+"]
-  ) ["", "", ""] (fst <$> h)
+  ) ["", "", ""] cs
+
+drawHand :: Hand -> String
+drawHand h = drawCards (fst <$> h)
