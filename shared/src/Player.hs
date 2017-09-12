@@ -98,8 +98,10 @@ drawPhase p = p6 & hand %~ (l' ++)
     (c5, p5) = p4 & deck . backM %%~ ht
     (c6, p6) = p5 & deck . backR %%~ ht
     l = zip [c1, c2, c3, c4, c5, c6] [(F, L), (F, M), (F, R), (B, L), (B, M), (B, R)]
-    l' = l ^.. traverse . filtered (\x -> x ^. _1 . to isJust)
-           & traverse . _1 %~ fromJust
+    l' = l ^@.. traverse . itraversed . indexMaybe id
+
+indexMaybe :: Indexable j p => Applicative f => (i -> Maybe j) -> Optical' p (Indexed i) f a a
+indexMaybe p f = Indexed $ \i a -> maybe (pure a) (indexed f ?? a) (p i)
 
 --test :: [(String, String)]
 --test = [(Just "a", "b"), (Nothing, ""), (Just "c", "d")] ^.. traverse . _ _1 . _Just
