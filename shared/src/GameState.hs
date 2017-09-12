@@ -71,12 +71,17 @@ evalCE p o = flip eval o $ view p
       target' o Opp . colToFront col %= (++ [c])
       evalCE (k ()) o
     eval (AddTimer cd b p' :>>= k) o = do
-      target' o Self . colToTimer (o ^. column) %= (Timer cd p' b :)
+      fb <- use (target' o Self . colToTimer (o ^. column) . to firstBlocking)
+      if b && isJust fb
+        then -- merge blocking timers
+          let (i, Timer cd2 p2 _) = fromJust fb
+          in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) (p' >> p2) True
+        else -- add timer
+          target' o Self . colToTimer (o ^. column) %= (Timer cd p' b :)
       evalCE (k ()) o
     eval (GetOrigin :>>= k) o = evalCE (k o) o
     eval (Blocked :>>= k) o = do
       fb <- use (target' o Opp . colToTimer (o ^. column) . to firstBlocking)
-      tell ["fb check " ++ (show $ fst <$> fb)]
       maybe
         (return ())
         (\(i, _) -> target' o Opp . colToTimer (o ^. column) %= deleteNth i)
@@ -121,7 +126,7 @@ runTurn gs = do
   gsAfterTick <- tickPhase gs
   let gsAfterDraw = gsAfterTick & player1 %~ drawPhase
                                 & player2 %~ drawPhase
-  iP1 <- evalUiCli $ playHand $ fst <$> gsAfterDraw ^. player1 . hand
+  iP1 <- evalUiCli $ playHand $ gsAfterDraw ^.. player1 . hand . traverse . _1
   let (cardP1, (row1, col1)) =
         (gsAfterDraw ^. player1 . hand) !! iP1
   let (cardP2, (row2, col2)) =

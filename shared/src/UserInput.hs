@@ -27,6 +27,16 @@ evalUiCli = eval . view
     eval (PlayHand h :>>= k) = do
       liftIO $ putStrLn "choose card to play:"
       liftIO $ putStrLn $ drawCards h
-      liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> [0..(length h-1)])
-      i <- liftIO readLn
+      let choices = [0..(length h-1)]
+      liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> choices)
+      i <- readLnGuarded (`elem` choices)
       evalUiCli (k i)
+
+readLnGuarded :: (MonadIO m, Read a) => (a -> Bool) -> m a
+readLnGuarded f = do
+  i <- liftIO readLn
+  if f i
+    then return i
+    else do
+      liftIO $ putStrLn "invalid choice"
+      readLnGuarded f
