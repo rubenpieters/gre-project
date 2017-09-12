@@ -54,12 +54,12 @@ colToFront R = deck . frontR
 type HandIx = Int
 
 testDeck = Deck
-  { _frontL = [dmg11Card, dmg11Card]
-  , _frontM = [dmg11Card, dmg11Card]
-  , _frontR = [dmg11Card, dmg11Card]
-  , _backL = [dmg11Card, dmg11Card]
-  , _backM = [dmg11Card, dmg11Card]
-  , _backR = [dmg11Card, dmg11Card]
+  { _frontL = [focusTestCard]
+  , _frontM = [dmg11Card]
+  , _frontR = [dmg11Card]
+  , _backL = [dmg11Card]
+  , _backM = [dmg11Card]
+  , _backR = [dmg11Card]
   }
 
 testPlayer' = Player

@@ -40,9 +40,17 @@ addTimer a b c = singleton $ AddTimer a b c
 getOrigin = singleton GetOrigin
 blocked = singleton Blocked
 
+type CardReq = Program CardReqOp Bool
+
+data CardReqOp a where
+  FocusCards :: CardReqOp Int
+
+focusCards = singleton FocusCards
+
 data Card = Card
   { _cardId :: CardId
   , _cardEffect :: CardEffect
+  , _cardReqs :: CardReq
   }
 
 makeLenses ''Card
@@ -53,6 +61,7 @@ dmgCard = Card
   , _cardEffect = do
       logG "activate dmg card"
       addDP 1
+  , _cardReqs = return True
   }
 
 focusCard :: Card
@@ -60,6 +69,7 @@ focusCard = Card
   { _cardId = 2
   , _cardEffect =
       logG "activate focus card"
+  , _cardReqs = return True
   }
 
 dmg11Card :: Card
@@ -76,6 +86,7 @@ dmg11Card = Card
             o <- getOrigin
             logG $ "dmg 1 " ++ show (o ^. column)
             replicateM_ 1 (addCard dmgCard (o ^. column))
+  , _cardReqs = return True
   }
 
 blockCard :: Card
@@ -84,9 +95,23 @@ blockCard = Card
   , _cardEffect = do
     logG "refresh block 2"
     addTimer 2 True $ return ()
+  , _cardReqs = return True
   }
 
+focusTestCard :: Card
+focusTestCard = Card
+  { _cardId = 5
+  , _cardEffect =
+      logG "focus test card"
+  , _cardReqs = do
+      focus <- focusCards
+      return $ focus >= 1
+  }
+
+isFocus :: Card -> Bool
+isFocus c = c ^. cardId == 2
+
 drawCard :: Card -> String
-drawCard c | _cardId c == 1 = "D"
-drawCard c | _cardId c == 2 = "F"
-drawCard c = show $ _cardId c
+drawCard c | c ^. cardId == 1 = "D"
+drawCard c | c ^. cardId == 2 = "F"
+drawCard c = show $ c ^. cardId

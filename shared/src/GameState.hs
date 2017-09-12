@@ -11,11 +11,13 @@ import Data.Maybe
 
 import Control.Monad.State
 import Control.Monad.Writer
+import Control.Monad.Reader
 import Control.Lens hiding (view)
 import Control.Monad.Operational
 
 import Card
 import Player
+import Hand
 import Timer
 import UserInput
 
@@ -90,6 +92,23 @@ evalCE p o = flip eval o $ view p
 
 deleteNth i xs = take i xs ++ drop (succ i) xs
 
+evalCR  :: (MonadReader GameState m)
+       => Program CardReqOp a -> Origin -> m a
+evalCR p o = flip eval o $ view p
+  where
+    eval :: (MonadReader GameState m)
+         => ProgramView CardReqOp a -> Origin -> m a
+    eval (Return x) o = return x
+    eval (FocusCards :>>= k) o = do
+      gs <- ask
+      let (Sum focus) = gs ^. target' o Self . hand . traverse . filtered (isFocus . fst) . to (const $ Sum 1)
+      evalCR (k focus) o
+
+cardsOnlyReq :: GameState -> Origin -> Hand -> Hand
+cardsOnlyReq gs o h = hWithReq ^.. traverse . filtered (\x -> x ^. _2) . _1
+  where
+    hWithReq = (\c@(x, _) -> (c, runReader (evalCR (x ^. cardReqs) o) gs)) <$> h
+
 execEff :: (MonadWriter [String] m) => CardEffect -> Origin -> GameState -> m GameState
 execEff ce o gs = execStateT (evalCE ce o) gs
 
@@ -126,9 +145,11 @@ runTurn gs = do
   gsAfterTick <- tickPhase gs
   let gsAfterDraw = gsAfterTick & player1 %~ drawPhase
                                 & player2 %~ drawPhase
-  iP1 <- evalUiCli $ playHand $ gsAfterDraw ^.. player1 . hand . traverse . _1
+  let fullHand1 = gsAfterDraw ^.. player1 . hand . traverse
+  let filteredHand1 = cardsOnlyReq gsAfterDraw (Origin undefined 1) fullHand1
+  i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
   let (cardP1, (row1, col1)) =
-        (gsAfterDraw ^. player1 . hand) !! iP1
+       filteredHand1 !! i1
   let (cardP2, (row2, col2)) =
         head $ gsAfterDraw ^. player2 . hand
   gsAfterEff1 <- execCard cardP1 (Origin col1 1) gsAfterDraw

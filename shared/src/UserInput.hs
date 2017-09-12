@@ -15,19 +15,19 @@ import Card
 import Hand
 
 data UserInputOp a where
-  PlayHand :: [Card] -> UserInputOp Int
+  PlayHand :: [Card] -> [Card] -> UserInputOp Int
 
-playHand a = singleton $ PlayHand a
+playHand a b = singleton $ PlayHand a b
 
 evalUiCli :: (MonadIO m) => Program UserInputOp a -> m a
 evalUiCli = eval . view
   where
     eval :: (MonadIO m) => ProgramView UserInputOp a -> m a
     eval (Return x) = return x
-    eval (PlayHand h :>>= k) = do
+    eval (PlayHand _ choiceH :>>= k) = do
       liftIO $ putStrLn "choose card to play:"
-      liftIO $ putStrLn $ drawCards h
-      let choices = [0..(length h-1)]
+      liftIO $ putStrLn $ drawCards choiceH
+      let choices = [0..(length choiceH-1)]
       liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> choices)
       i <- readLnGuarded (`elem` choices)
       evalUiCli (k i)
