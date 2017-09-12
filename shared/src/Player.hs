@@ -72,12 +72,12 @@ testPlayer' = Player
 }
 
 dummyDeck = Deck
-  { _frontL = [focusCard]
-  , _frontM = [focusCard]
-  , _frontR = [focusCard]
-  , _backL = [focusCard]
-  , _backM = [focusCard]
-  , _backR = [focusCard]
+  { _frontL = [blockCard]
+  , _frontM = [blockCard]
+  , _frontR = [blockCard]
+  , _backL = [blockCard]
+  , _backM = [blockCard]
+  , _backR = [blockCard]
   }
 dummyPlayer = Player
   { _deck = dummyDeck
@@ -89,16 +89,20 @@ dummyPlayer = Player
 }
 
 drawPhase :: Player -> Player
-drawPhase p = p6 & hand %~ (catMaybes l' ++)
+drawPhase p = p6 & hand %~ (l' ++)
   where
-    (c1, p1) = p & (deck . frontL) %%~ ht
-    (c2, p2) = p1 & (deck . frontM) %%~ ht
-    (c3, p3) = p2 & (deck . frontR) %%~ ht
-    (c4, p4) = p3 & (deck . backL) %%~ ht
-    (c5, p5) = p4 & (deck . backM) %%~ ht
-    (c6, p6) = p5 & (deck . backR) %%~ ht
+    (c1, p1) = p & deck . frontL %%~ ht
+    (c2, p2) = p1 & deck . frontM %%~ ht
+    (c3, p3) = p2 & deck . frontR %%~ ht
+    (c4, p4) = p3 & deck . backL %%~ ht
+    (c5, p5) = p4 & deck . backM %%~ ht
+    (c6, p6) = p5 & deck . backR %%~ ht
     l = zip [c1, c2, c3, c4, c5, c6] [(F, L), (F, M), (F, R), (B, L), (B, M), (B, R)]
-    l' = seqTM <$> l
+    l' = l ^.. traverse . filtered (\x -> x ^. _1 . to isJust)
+           & traverse . _1 %~ fromJust
+
+--test :: [(String, String)]
+--test = [(Just "a", "b"), (Nothing, ""), (Just "c", "d")] ^.. traverse . _ _1 . _Just
 
 wardPhase :: Player -> Player
 wardPhase p = p & hand .~ []
@@ -109,13 +113,7 @@ wardPhase p = p & hand .~ []
                 & deck . backM %~ (++ cards (B, M))
                 & deck . backR %~ (++ cards (B, R))
   where
-    cards loc = fst <$> filter ((== loc) . snd) (p ^. hand)
-
--- [(1,2),(2,3),(3,4)] & traverse . _2 %~ (== 2)
-
-seqTM :: (Maybe a, b) -> Maybe (a, b)
-seqTM (Just a, b) = Just (a, b)
-seqTM (Nothing, _) = Nothing
+    cards loc = p ^.. hand . traverse . filtered (\x -> x ^. _2 == loc) . _1
 
 ht :: [a] -> (Maybe a, [a])
 ht [] = (Nothing, [])

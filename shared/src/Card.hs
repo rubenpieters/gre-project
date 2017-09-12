@@ -29,15 +29,16 @@ data CardEffectOp a where
   AddDP :: Int -> CardEffectOp ()
   AddCard :: Card -> DeckColumn -> CardEffectOp ()
   Log :: String -> CardEffectOp ()
-  AddTimer :: Int -> CardEffect -> CardEffectOp ()
+  AddTimer :: Int -> Bool -> CardEffect -> CardEffectOp ()
   GetOrigin :: CardEffectOp Origin
+  Blocked :: CardEffectOp Bool
 
 addDP a = singleton $ AddDP a
 addCard a b = singleton $ AddCard a b
 logG a = singleton $ Log a
-addTimer a b = singleton $ AddTimer a b
+addTimer a b c = singleton $ AddTimer a b c
 getOrigin = singleton GetOrigin
-
+blocked = singleton Blocked
 
 data Card = Card
   { _cardId :: CardId
@@ -57,9 +58,8 @@ dmgCard = Card
 focusCard :: Card
 focusCard = Card
   { _cardId = 2
-  , _cardEffect = do
+  , _cardEffect =
       logG "activate focus card"
-      return ()
   }
 
 dmg11Card :: Card
@@ -67,11 +67,23 @@ dmg11Card = Card
   { _cardId = 3
   , _cardEffect = do
       logG "queue 1 dmg timer 2"
-      addTimer 2 $ do
-        o <- getOrigin
-        logG $ "dmg 1 " ++ show (o ^. column)
-        replicateM_ 1 (addCard dmgCard (o ^. column))
-      return ()
+      addTimer 2 False $ do
+        b <- blocked
+        if b
+          then
+            logG "(blocked) dmg 1"
+          else do
+            o <- getOrigin
+            logG $ "dmg 1 " ++ show (o ^. column)
+            replicateM_ 1 (addCard dmgCard (o ^. column))
+  }
+
+blockCard :: Card
+blockCard = Card
+  { _cardId = 4
+  , _cardEffect = do
+    logG "refresh block 2"
+    addTimer 2 True $ return ()
   }
 
 drawCard :: Card -> String

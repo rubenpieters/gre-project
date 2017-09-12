@@ -7,6 +7,7 @@ module GameState
   where
 
 import Data.Either
+import Data.Maybe
 
 import Control.Monad.State
 import Control.Monad.Writer
@@ -50,8 +51,8 @@ target 2 Self = player2
 target 2 Opp = player1
 target _ _ = error "invalid turn value"
 
-target' :: GameState -> Target -> Lens' GameState Player
-target' gs = target (_turn gs)
+target' :: Origin -> Target -> Lens' GameState Player
+target' o = target (o ^. player)
 
 evalCE :: (MonadState GameState m, MonadWriter [String] m)
        => Program CardEffectOp a -> Origin -> m a
@@ -64,18 +65,25 @@ evalCE p o = flip eval o $ view p
       tell [s]
       evalCE (k ()) o
     eval (AddDP x :>>= k) o = do
-      gs <- get
-      target' gs Self . dps %= (x +)
+      target' o Self . dps %= (x +)
       evalCE (k ()) o
     eval (AddCard c col :>>= k) o = do
-      gs <- get
-      target' gs Opp . colToFront col %= (++ [c])
+      target' o Opp . colToFront col %= (++ [c])
       evalCE (k ()) o
-    eval (AddTimer cd p' :>>= k) o = do
-      gs <- get
-      target' gs Self . colToTimer L %= ((Timer cd p') :)
+    eval (AddTimer cd b p' :>>= k) o = do
+      target' o Self . colToTimer (o ^. column) %= (Timer cd p' b :)
       evalCE (k ()) o
     eval (GetOrigin :>>= k) o = evalCE (k o) o
+    eval (Blocked :>>= k) o = do
+      fb <- use (target' o Opp . colToTimer (o ^. column) . to firstBlocking)
+      tell ["fb check " ++ (show $ fst <$> fb)]
+      maybe
+        (return ())
+        (\(i, _) -> target' o Opp . colToTimer (o ^. column) %= deleteNth i)
+        fb
+      evalCE (k (isJust fb)) o
+
+deleteNth i xs = take i xs ++ drop (succ i) xs
 
 execEff :: (MonadWriter [String] m) => CardEffect -> Origin -> GameState -> m GameState
 execEff ce o gs = execStateT (evalCE ce o) gs
