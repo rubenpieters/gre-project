@@ -24,6 +24,7 @@ data Player = Player
   , _timersM :: [Timer]
   , _timersR :: [Timer]
   , _dps :: Int
+  , _actions :: Int
   }
 
 makeLenses ''Player
@@ -54,8 +55,8 @@ colToFront R = deck . frontR
 type HandIx = Int
 
 testDeck = Deck
-  { _frontL = [focusTestCard]
-  , _frontM = [dmg11Card]
+  { _frontL = [comboTestCard]
+  , _frontM = [comboTestCard]
   , _frontR = [dmg11Card]
   , _backL = [dmg11Card]
   , _backM = [dmg11Card]
@@ -69,6 +70,7 @@ testPlayer' = Player
   , _timersM = []
   , _timersR = []
   , _dps = 0
+  , _actions = 0
 }
 
 dummyDeck = Deck
@@ -86,7 +88,11 @@ dummyPlayer = Player
   , _timersM = []
   , _timersR = []
   , _dps = 0
+  , _actions = 0
 }
+
+initPhase :: Player -> Player
+initPhase p = p & actions .~ 1
 
 drawPhase :: Player -> Player
 drawPhase p = p6 & hand %~ (l' ++)

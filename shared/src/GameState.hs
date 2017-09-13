@@ -103,66 +103,72 @@ evalCR p o = flip eval o $ view p
       gs <- ask
       let (Sum focus) = gs ^. target' o Self . hand . traverse . filtered (isFocus . fst) . to (const $ Sum 1)
       evalCR (k focus) o
+    eval (ComboCards cid :>>= k) o = do
+      gs <- ask
+      let (Sum combo) = gs ^. target' o Self . hand . traverse . filtered (isCombo cid . fst) . to (const $ Sum 1)
+      evalCR (k combo) o
 
 cardsOnlyReq :: GameState -> Origin -> Hand -> Hand
 cardsOnlyReq gs o h = hWithReq ^.. traverse . filtered (\x -> x ^. _2) . _1
   where
     hWithReq = (\c@(x, _) -> (c, runReader (evalCR (x ^. cardReqs) o) gs)) <$> h
 
-execEff :: (MonadWriter [String] m) => CardEffect -> Origin -> GameState -> m GameState
-execEff ce o gs = execStateT (evalCE ce o) gs
+execCard :: (MonadState GameState m, MonadWriter [String] m)
+         => Card -> Origin -> m ()
+execCard c o = evalCE (_cardEffect c) o
 
-execCard :: (MonadWriter [String] m) => Card -> Origin -> GameState -> m GameState
-execCard c o gs = execEff (_cardEffect c) o gs
+execEffs :: (MonadState GameState m, MonadWriter [String] m)
+         => [CardEffect] -> Origin -> m ()
+execEffs [] _ = return ()
+execEffs (c:cs) o = evalCE c o >> execEffs cs o
 
-execEffs :: (MonadWriter [String] m) => [CardEffect] -> Origin -> GameState -> m GameState
-execEffs [] _ gs = return gs
-execEffs (c:cs) o gs = execEff c o gs >>= execEffs cs o
-
-tickPhase :: (MonadWriter [String] m) => GameState -> m GameState
-tickPhase gs = do
-  gs7 <- execEffs ces1 (Origin L 1) gs6
-  gs8 <- execEffs ces2 (Origin M 1) gs7
-  gs9 <- execEffs ces3 (Origin R 1) gs8
-  gs10 <- execEffs ces4 (Origin L 2) gs9
-  gs11 <- execEffs ces5 (Origin M 2) gs10
-  gs12 <- execEffs ces6 (Origin R 2) gs11
-  return gs12
-  where
-    (ces1, gs1) = gs & (player1 . timersL) %%~ newTimersAndEffs
-    (ces2, gs2) = gs1 & (player1 . timersM) %%~ newTimersAndEffs
-    (ces3, gs3) = gs2 & (player1 . timersR) %%~ newTimersAndEffs
-    (ces4, gs4) = gs3 & (player2 . timersL) %%~ newTimersAndEffs
-    (ces5, gs5) = gs4 & (player2 . timersM) %%~ newTimersAndEffs
-    (ces6, gs6) = gs5 & (player2 . timersR) %%~ newTimersAndEffs
+tickPhase :: (MonadState GameState m, MonadWriter [String] m)
+          => m ()
+tickPhase = do
+  ces1 <- (player1 . timersL) %%= newTimersAndEffs
+  ces2 <- (player1 . timersM) %%= newTimersAndEffs
+  ces3 <- (player1 . timersR) %%= newTimersAndEffs
+  ces4 <- (player2 . timersL) %%= newTimersAndEffs
+  ces5 <- (player2 . timersM) %%= newTimersAndEffs
+  ces6 <- (player2 . timersR) %%= newTimersAndEffs
+  execEffs ces1 (Origin L 1)
+  execEffs ces2 (Origin M 1)
+  execEffs ces3 (Origin R 1)
+  execEffs ces4 (Origin L 2)
+  execEffs ces5 (Origin M 2)
+  execEffs ces6 (Origin R 2)
 
 newTimersAndEffs :: [Timer] -> ([CardEffect], [Timer])
 newTimersAndEffs ts = partitionEithers $ tick <$> ts
 
-runTurn :: (MonadWriter [String] m, MonadIO m)
-        => GameState -> m GameState
-runTurn gs = do
-  gsAfterTick <- tickPhase gs
-  let gsAfterDraw = gsAfterTick & player1 %~ drawPhase
-                                & player2 %~ drawPhase
+runTurn :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+        => m ()
+runTurn = do
+  player1 %= initPhase
+  player2 %= initPhase
+  tickPhase
+  player1 %= drawPhase
+  player2 %= drawPhase
+  gsAfterDraw <- get
   let fullHand1 = gsAfterDraw ^.. player1 . hand . traverse
+  --fullHand1 <- use (player1 . hand)
   let filteredHand1 = cardsOnlyReq gsAfterDraw (Origin undefined 1) fullHand1
   i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
   let (cardP1, (row1, col1)) =
        filteredHand1 !! i1
   let (cardP2, (row2, col2)) =
         head $ gsAfterDraw ^. player2 . hand
-  gsAfterEff1 <- execCard cardP1 (Origin col1 1) gsAfterDraw
-  gsAfterEff2 <- execCard cardP2 (Origin col2 2) gsAfterEff1
-  return $ gsAfterEff2 & player1 %~ wardPhase
-                       & player2 %~ wardPhase
+  execCard cardP1 (Origin col1 1)
+  execCard cardP2 (Origin col2 2)
+  player1 %= wardPhase
+  player2 %= wardPhase
 
-runTurn' :: GameState -> IO (GameState, [String])
-runTurn' = runWriterT . runTurn
+--runTurn' :: GameState -> IO (GameState, [String])
+--runTurn' gs = runWriterT . execStateT runTurn gs
 
 runTurn'' :: GameState -> IO GameState
 runTurn'' gs = do
-  (newGs, log) <- runWriterT $ runTurn gs
+  (newGs, log) <- runWriterT $ execStateT runTurn gs
   mapM_ putStrLn log
   return newGs
 

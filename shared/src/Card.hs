@@ -44,8 +44,10 @@ type CardReq = Program CardReqOp Bool
 
 data CardReqOp a where
   FocusCards :: CardReqOp Int
+  ComboCards :: CardId -> CardReqOp Int
 
 focusCards = singleton FocusCards
+comboCards a = singleton $ ComboCards a
 
 data Card = Card
   { _cardId :: CardId
@@ -108,8 +110,21 @@ focusTestCard = Card
       return $ focus >= 1
   }
 
+comboTestCard :: Card
+comboTestCard = Card
+  { _cardId = 6
+  , _cardEffect =
+    logG "combo test card"
+  , _cardReqs = do
+    combo <- comboCards 6
+    return $ combo >= 2
+  }
+
 isFocus :: Card -> Bool
 isFocus c = c ^. cardId == 2
+
+isCombo :: CardId -> Card -> Bool
+isCombo cid c = c ^. cardId == cid
 
 drawCard :: Card -> String
 drawCard c | c ^. cardId == 1 = "D"
