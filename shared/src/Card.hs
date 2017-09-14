@@ -27,6 +27,7 @@ type CardEffect = Program CardEffectOp ()
 
 data CardEffectOp a where
   AddDP :: Int -> CardEffectOp ()
+  AddAP :: Int -> CardEffectOp ()
   AddCard :: Card -> DeckColumn -> CardEffectOp ()
   Log :: String -> CardEffectOp ()
   AddTimer :: Int -> Bool -> CardEffect -> CardEffectOp ()
@@ -34,9 +35,12 @@ data CardEffectOp a where
   Blocked :: CardEffectOp Bool
 
 addDP a = singleton $ AddDP a
+addAP a = singleton $ AddAP a
 addCard a b = singleton $ AddCard a b
 logG a = singleton $ Log a
 addTimer a b c = singleton $ AddTimer a b c
+addBTimer a b = singleton $ AddTimer a True b
+addNBTimer a b = singleton $ AddTimer a False b
 getOrigin = singleton GetOrigin
 blocked = singleton Blocked
 
@@ -118,6 +122,16 @@ comboTestCard = Card
   , _cardReqs = do
     combo <- comboCards 6
     return $ combo >= 2
+  }
+
+cantripTestCard :: Card
+cantripTestCard = Card
+  { _cardId = 7
+  , _cardEffect = do
+    logG "cantrip test card"
+    addNBTimer 20 $ return ()
+    addAP 1
+  , _cardReqs = return True
   }
 
 isFocus :: Card -> Bool

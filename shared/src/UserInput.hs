@@ -28,7 +28,7 @@ evalUiCli = eval . view
       liftIO $ putStrLn "choose card to play:"
       liftIO $ putStrLn $ drawCards choiceH
       let choices = [0..(length choiceH-1)]
-      liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> choices)
+      liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> reverse choices)
       i <- readLnGuarded (`elem` choices)
       evalUiCli (k i)
 

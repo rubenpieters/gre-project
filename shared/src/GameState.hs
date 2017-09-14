@@ -69,6 +69,9 @@ evalCE p o = flip eval o $ view p
     eval (AddDP x :>>= k) o = do
       target' o Self . dps %= (x +)
       evalCE (k ()) o
+    eval (AddAP x :>>= k) o = do
+      target' o Self . actions %= (x +)
+      evalCE (k ()) o
     eval (AddCard c col :>>= k) o = do
       target' o Opp . colToFront col %= (++ [c])
       evalCE (k ()) o
@@ -141,6 +144,21 @@ tickPhase = do
 newTimersAndEffs :: [Timer] -> ([CardEffect], [Timer])
 newTimersAndEffs ts = partitionEithers $ tick <$> ts
 
+actionPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+            => Lens' GameState Player -> m ()
+actionPhase player = do
+  gs <- get
+  fullHand1 <- use (player . hand)
+  let filteredHand1 = cardsOnlyReq gs (Origin undefined 1) fullHand1
+  i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
+  let (cardP1, (row1, col1)) = filteredHand1 !! i1
+  player . actions %= (\x -> x - 1)
+  execCard cardP1 (Origin col1 1)
+  playerActions <- use (player . actions)
+  if playerActions <= 0
+    then return ()
+    else actionPhase player
+
 runTurn :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
         => m ()
 runTurn = do
@@ -150,15 +168,9 @@ runTurn = do
   player1 %= drawPhase
   player2 %= drawPhase
   gsAfterDraw <- get
-  let fullHand1 = gsAfterDraw ^.. player1 . hand . traverse
-  --fullHand1 <- use (player1 . hand)
-  let filteredHand1 = cardsOnlyReq gsAfterDraw (Origin undefined 1) fullHand1
-  i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
-  let (cardP1, (row1, col1)) =
-       filteredHand1 !! i1
+  actionPhase player1
   let (cardP2, (row2, col2)) =
         head $ gsAfterDraw ^. player2 . hand
-  execCard cardP1 (Origin col1 1)
   execCard cardP2 (Origin col2 2)
   player1 %= wardPhase
   player2 %= wardPhase
