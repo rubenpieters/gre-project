@@ -92,8 +92,17 @@ evalCE p o = flip eval o $ view p
         (\(i, _) -> target' o Opp . colToTimer (o ^. column) %= deleteNth i)
         fb
       evalCE (k (isJust fb)) o
+    eval (Combo cid :>>= k) o = do
+      gs <- get
+      let cards = gs ^.. target' o Self . hand . traverse
+      let cardsIxs = zip [0..] cards
+      let comboCardsIxs = cardsIxs ^.. traverse . filtered (isCombo cid . fst . snd) . _1
+      mapM_ (`playCard` o) comboCardsIxs
+      evalCE (k ()) o
 
 deleteNth i xs = take i xs ++ drop (succ i) xs
+
+takeNth i xs = (xs ^? ix i, deleteNth i xs)
 
 evalCR  :: (MonadReader GameState m)
        => Program CardReqOp a -> Origin -> m a
@@ -116,9 +125,14 @@ cardsOnlyReq gs o h = hWithReq ^.. traverse . filtered (\x -> x ^. _2) . _1
   where
     hWithReq = (\c@(x, _) -> (c, runReader (evalCR (x ^. cardReqs) o) gs)) <$> h
 
-execCard :: (MonadState GameState m, MonadWriter [String] m)
-         => Card -> Origin -> m ()
-execCard c o = evalCE (_cardEffect c) o
+playCard :: (MonadState GameState m, MonadWriter [String] m)
+         => Int -> Origin -> m ()
+playCard i o = do
+  playedCard <- (target' o Self . hand) %%= takeNth i
+  maybe
+    (return ())
+    (\(c, _) -> evalCE (c ^. cardEffect) o)
+    playedCard
 
 execEffs :: (MonadState GameState m, MonadWriter [String] m)
          => [CardEffect] -> Origin -> m ()
@@ -150,10 +164,15 @@ actionPhase player = do
   gs <- get
   fullHand1 <- use (player . hand)
   let filteredHand1 = cardsOnlyReq gs (Origin undefined 1) fullHand1
+  -- ask for action
   i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
+  -- pick chosen card
   let (cardP1, (row1, col1)) = filteredHand1 !! i1
+  -- reduce player actions
   player . actions %= (\x -> x - 1)
-  execCard cardP1 (Origin col1 1)
+  -- play card
+  playCard i1 (Origin col1 1)
+  -- if any actions left, redo action phase
   playerActions <- use (player . actions)
   if playerActions <= 0
     then return ()
@@ -171,12 +190,9 @@ runTurn = do
   actionPhase player1
   let (cardP2, (row2, col2)) =
         head $ gsAfterDraw ^. player2 . hand
-  execCard cardP2 (Origin col2 2)
+  playCard 0 (Origin col2 2)
   player1 %= wardPhase
   player2 %= wardPhase
-
---runTurn' :: GameState -> IO (GameState, [String])
---runTurn' gs = runWriterT . execStateT runTurn gs
 
 runTurn'' :: GameState -> IO GameState
 runTurn'' gs = do

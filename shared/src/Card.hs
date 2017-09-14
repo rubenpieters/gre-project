@@ -33,6 +33,7 @@ data CardEffectOp a where
   AddTimer :: Int -> Bool -> CardEffect -> CardEffectOp ()
   GetOrigin :: CardEffectOp Origin
   Blocked :: CardEffectOp Bool
+  Combo :: Int -> CardEffectOp ()
 
 addDP a = singleton $ AddDP a
 addAP a = singleton $ AddAP a
@@ -43,6 +44,7 @@ addBTimer a b = singleton $ AddTimer a True b
 addNBTimer a b = singleton $ AddTimer a False b
 getOrigin = singleton GetOrigin
 blocked = singleton Blocked
+combo a = singleton $ Combo a
 
 type CardReq = Program CardReqOp Bool
 
@@ -117,8 +119,10 @@ focusTestCard = Card
 comboTestCard :: Card
 comboTestCard = Card
   { _cardId = 6
-  , _cardEffect =
+  , _cardEffect = do
     logG "combo test card"
+    addNBTimer 6 $ return ()
+    combo 6
   , _cardReqs = do
     combo <- comboCards 6
     return $ combo >= 2
@@ -129,7 +133,7 @@ cantripTestCard = Card
   { _cardId = 7
   , _cardEffect = do
     logG "cantrip test card"
-    addNBTimer 20 $ return ()
+    addNBTimer 7 $ return ()
     addAP 1
   , _cardReqs = return True
   }
