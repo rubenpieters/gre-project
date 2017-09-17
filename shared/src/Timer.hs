@@ -11,8 +11,9 @@ import Card
 
 data Timer = Timer
   { _countDown :: Int
-  , _countDownEffect :: CardEffect
   , _block :: Bool
+  , _timerOrigin :: Origin
+  , _countDownEffect :: CardEffect
   }
 
 makeLenses ''Timer
@@ -32,9 +33,9 @@ timerDmg dmg cd col = Timer
 -}
 
 
-tick :: Timer -> Either CardEffect Timer
+tick :: Timer -> Either (CardEffect, Origin) Timer
 tick t = if t ^. countDown == 1
-  then Left $ t ^. countDownEffect
+  then Left $ (t ^. countDownEffect, t ^. timerOrigin)
   else Right $ t & countDown %~ (\x -> x - 1)
 
 -- TODO: think of rules with multiple blocking timers

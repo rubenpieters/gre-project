@@ -77,12 +77,12 @@ evalCE p o = flip eval o $ view p
       evalCE (k ()) o
     eval (AddTimer cd b p' :>>= k) o = do
       fb <- use (target' o Self . colToTimer (o ^. column) . to firstBlocking)
-      if b && isJust fb
+      if b && isJust fb && ((fromJust fb) ^. _2 . timerOrigin == o)
         then -- merge blocking timers
-          let (i, Timer cd2 p2 _) = fromJust fb
-          in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) (p' >> p2) True
+          let (i, Timer cd2 _ _ p2) = fromJust fb
+          in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) True o (p' >> p2)
         else -- add timer
-          target' o Self . colToTimer (o ^. column) %= (Timer cd p' b :)
+          target' o Self . colToTimer (o ^. column) %= (Timer cd b o p':)
       evalCE (k ()) o
     eval (GetOrigin :>>= k) o = evalCE (k o) o
     eval (Blocked :>>= k) o = do
@@ -135,9 +135,9 @@ playCard i o = do
     playedCard
 
 execEffs :: (MonadState GameState m, MonadWriter [String] m)
-         => [CardEffect] -> Origin -> m ()
+         => [CardEffect] -> [Origin] -> m ()
 execEffs [] _ = return ()
-execEffs (c:cs) o = evalCE c o >> execEffs cs o
+execEffs (c:cs) (o:os) = evalCE c o >> execEffs cs os
 
 tickPhase :: (MonadState GameState m, MonadWriter [String] m)
           => m ()
@@ -148,14 +148,14 @@ tickPhase = do
   ces4 <- (player2 . timersL) %%= newTimersAndEffs
   ces5 <- (player2 . timersM) %%= newTimersAndEffs
   ces6 <- (player2 . timersR) %%= newTimersAndEffs
-  execEffs ces1 (Origin L 1)
-  execEffs ces2 (Origin M 1)
-  execEffs ces3 (Origin R 1)
-  execEffs ces4 (Origin L 2)
-  execEffs ces5 (Origin M 2)
-  execEffs ces6 (Origin R 2)
+  uncurry execEffs $ unzip ces1
+  uncurry execEffs $ unzip ces2
+  uncurry execEffs $ unzip ces3
+  uncurry execEffs $ unzip ces4
+  uncurry execEffs $ unzip ces5
+  uncurry execEffs $ unzip ces6
 
-newTimersAndEffs :: [Timer] -> ([CardEffect], [Timer])
+newTimersAndEffs :: [Timer] -> ([(CardEffect, Origin)], [Timer])
 newTimersAndEffs ts = partitionEithers $ tick <$> ts
 
 actionPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
@@ -163,7 +163,7 @@ actionPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
 actionPhase player = do
   gs <- get
   fullHand1 <- use (player . hand)
-  let filteredHand1 = cardsOnlyReq gs (Origin undefined 1) fullHand1
+  let filteredHand1 = cardsOnlyReq gs (Origin undefined undefined 1) fullHand1
   -- ask for action
   i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
   -- pick chosen card
@@ -171,7 +171,7 @@ actionPhase player = do
   -- reduce player actions
   player . actions %= (\x -> x - 1)
   -- play card
-  playCard i1 (Origin col1 1)
+  playCard i1 (Origin col1 row1 1)
   -- if any actions left, redo action phase
   playerActions <- use (player . actions)
   if playerActions <= 0
@@ -190,7 +190,7 @@ runTurn = do
   actionPhase player1
   let (cardP2, (row2, col2)) =
         head $ gsAfterDraw ^. player2 . hand
-  playCard 0 (Origin col2 2)
+  playCard 0 (Origin col2 row2 2)
   player1 %= wardPhase
   player2 %= wardPhase
 

@@ -18,8 +18,10 @@ data DeckRow = F | B
 
 data Origin = Origin
   { _column :: DeckColumn
+  , _row :: DeckRow
   , _player :: Int
   }
+  deriving (Eq, Show, Ord)
 
 makeLenses ''Origin
 
