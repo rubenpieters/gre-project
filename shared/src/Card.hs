@@ -25,12 +25,16 @@ data Origin = Origin
 
 makeLenses ''Origin
 
+
+data Target = Opp | Self
+  deriving (Show, Eq, Ord)
+
 type CardEffect = Program CardEffectOp ()
 
 data CardEffectOp a where
   AddDP :: Int -> CardEffectOp ()
   AddAP :: Int -> CardEffectOp ()
-  AddCard :: Card -> DeckColumn -> CardEffectOp ()
+  AddCard :: Card -> Origin -> Target -> CardEffectOp ()
   Log :: String -> CardEffectOp ()
   AddTimer :: Int -> Bool -> CardEffect -> CardEffectOp ()
   GetOrigin :: CardEffectOp Origin
@@ -39,7 +43,7 @@ data CardEffectOp a where
 
 addDP a = singleton $ AddDP a
 addAP a = singleton $ AddAP a
-addCard a b = singleton $ AddCard a b
+addCard a b c = singleton $ AddCard a b c
 logG a = singleton $ Log a
 addTimer a b c = singleton $ AddTimer a b c
 addBTimer a b = singleton $ AddTimer a True b
@@ -87,15 +91,16 @@ dmg11Card = Card
   { _cardId = 3
   , _cardEffect = do
       logG "queue 1 dmg timer 2"
-      addTimer 2 False $ do
+      o <- getOrigin
+      addCard dmg11Card o  Self
+      addNBTimer 2 (do
         b <- blocked
         if b
           then
             logG "(blocked) dmg 1"
           else do
-            o <- getOrigin
             logG $ "dmg 1 " ++ show (o ^. column)
-            replicateM_ 1 (addCard dmgCard (o ^. column))
+            replicateM_ 1 (addCard dmgCard o Opp))
   , _cardReqs = return True
   }
 

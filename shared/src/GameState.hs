@@ -43,9 +43,6 @@ drawGameState gs =
   ++ "player2\n"
   ++ drawPlayer (_player2 gs) ++ "\n"
 
-data Target = Opp | Self
-  deriving (Show, Eq, Ord)
-
 target :: Int -> Target -> Lens' GameState Player
 target 1 Self = player1
 target 1 Opp = player2
@@ -72,12 +69,12 @@ evalCE p o = flip eval o $ view p
     eval (AddAP x :>>= k) o = do
       target' o Self . actions %= (x +)
       evalCE (k ()) o
-    eval (AddCard c col :>>= k) o = do
-      target' o Opp . colToFront col %= (++ [c])
+    eval (AddCard c ogn tgt :>>= k) o = do
+      target' ogn tgt . originToPile ogn %= (++ [c])
       evalCE (k ()) o
     eval (AddTimer cd b p' :>>= k) o = do
       fb <- use (target' o Self . colToTimer (o ^. column) . to firstBlocking)
-      if b && isJust fb && ((fromJust fb) ^. _2 . timerOrigin == o)
+      if b && isJust fb && (fromJust fb ^. _2 . timerOrigin == o)
         then -- merge blocking timers
           let (i, Timer cd2 _ _ p2) = fromJust fb
           in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) True o (p' >> p2)

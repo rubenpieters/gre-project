@@ -52,6 +52,14 @@ colToFront L = deck . frontL
 colToFront M = deck . frontM
 colToFront R = deck . frontR
 
+originToPile :: Origin -> Lens' Player [Card]
+originToPile (Origin L F _) = deck . frontL
+originToPile (Origin M F _) = deck . frontM
+originToPile (Origin R F _) = deck . frontR
+originToPile (Origin L B _) = deck . backL
+originToPile (Origin M B _) = deck . backM
+originToPile (Origin R B _) = deck . backR
+
 type HandIx = Int
 
 testDeck = Deck
