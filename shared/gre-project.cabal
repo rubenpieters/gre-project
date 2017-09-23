@@ -24,6 +24,8 @@ library
                      , CardEffect
                      , GameState
                      , UserInput
+                     , Timer
+                     , Strategy
 --  other-modules:       Module
   build-depends:       base >= 4 && < 5
                      , mtl
@@ -57,6 +59,7 @@ test-suite spec
     test
   other-modules:
     LibSpec
+    GameStateSpec
   main-is:
     Spec.hs
   build-depends:

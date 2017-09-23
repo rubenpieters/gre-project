@@ -92,7 +92,7 @@ dmg11Card = Card
   , _cardEffect = do
       logG "queue 1 dmg timer 2"
       o <- getOrigin
-      addCard dmg11Card o  Self
+      addCard dmg11Card o Self
       addNBTimer 2 (do
         b <- blocked
         if b

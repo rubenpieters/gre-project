@@ -78,7 +78,7 @@ evalCE p o = flip eval o $ view p
         then -- merge blocking timers
           let (i, Timer cd2 _ _ p2) = fromJust fb
           in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) True o (p' >> p2)
-        else -- add timer
+        else do -- add timer
           target' o Self . colToTimer (o ^. column) %= (Timer cd b o p':)
       evalCE (k ()) o
     eval (GetOrigin :>>= k) o = evalCE (k o) o
@@ -156,44 +156,46 @@ newTimersAndEffs :: [Timer] -> ([(CardEffect, Origin)], [Timer])
 newTimersAndEffs ts = partitionEithers $ tick <$> ts
 
 actionPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
-            => Lens' GameState Player -> m ()
-actionPhase player = do
+            => UIHandler m -> Lens' GameState Player -> Int -> m ()
+actionPhase evalUi player pNo = do
   gs <- get
   fullHand1 <- use (player . hand)
   let filteredHand1 = cardsOnlyReq gs (Origin undefined undefined 1) fullHand1
-  -- ask for action
-  i1 <- evalUiCli $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
-  -- pick chosen card
-  let (cardP1, (row1, col1)) = filteredHand1 !! i1
-  -- reduce player actions
-  player . actions %= (\x -> x - 1)
-  -- play card
-  playCard i1 (Origin col1 row1 1)
-  -- if any actions left, redo action phase
-  playerActions <- use (player . actions)
-  if playerActions <= 0
-    then return ()
-    else actionPhase player
+  if (not (null filteredHand1))
+    then
+    do
+      -- ask for action
+      i1 <- evalUi $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
+      -- pick chosen card
+      let (cardP1, (row1, col1)) = filteredHand1 !! i1
+      -- reduce player actions
+      player . actions %= (\x -> x - 1)
+      -- play card
+      playCard i1 (Origin col1 row1 pNo)
+      -- if any actions left, redo action phase
+      playerActions <- use (player . actions)
+      if playerActions <= 0
+        then return ()
+        else actionPhase evalUi player pNo
+    else
+      return ()
 
 runTurn :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
-        => m ()
-runTurn = do
+        => GameData -> m ()
+runTurn (GameData ip1 ip2) = do
   player1 %= initPhase
   player2 %= initPhase
   tickPhase
   player1 %= drawPhase
   player2 %= drawPhase
-  gsAfterDraw <- get
-  actionPhase player1
-  let (cardP2, (row2, col2)) =
-        head $ gsAfterDraw ^. player2 . hand
-  playCard 0 (Origin col2 row2 2)
+  actionPhase (imToEvalUi ip1) player1 1
+  actionPhase (imToEvalUi ip2) player2 2
   player1 %= wardPhase
   player2 %= wardPhase
 
-runTurn'' :: GameState -> IO GameState
-runTurn'' gs = do
-  (newGs, log) <- runWriterT $ execStateT runTurn gs
+runTurn'' :: GameData -> GameState -> IO GameState
+runTurn'' gd gs = do
+  (newGs, log) <- runWriterT $ execStateT (runTurn gd) gs
   mapM_ putStrLn log
   return newGs
 
@@ -204,5 +206,5 @@ runTurnX 0 gs = do
 runTurnX i gs = do
   putStrLn $ "----- " ++ show i ++ "\n"
   putStrLn $ drawGameState gs
-  newGS <- runTurn'' gs
+  newGS <- runTurn'' (GameData Cli Strat) gs
   runTurnX (i-1) newGS

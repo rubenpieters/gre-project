@@ -67,7 +67,7 @@ spec = do
   describe "locAsLens" $ do
     it "should work in board case" $ property $ do
       \ps -> _board ps == ps ^. locAsLens Board
-    it "should work in deck case" $ property $ do
+{-    it "should work in deck case" $ property $ do
       \ps -> _deck ps == ps ^. locAsLens Deck
     it "should work in hand case" $ property $ do
       \ps -> _hand ps == ps ^. locAsLens Hand
@@ -158,3 +158,4 @@ spec = do
       let gs = testGS_B1B2 (map NumberCard [1,1]) (map NumberCard [1,2])
       newBoard <- playCard 0 (card15 (NumberCard 5)) gs
       newBoard ^.. playerState . element 0 . board . traverse `shouldBe` map NumberCard [1,1]
+-}
