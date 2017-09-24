@@ -18,16 +18,9 @@ import Control.Monad.Operational
 import Card
 import Player
 import Hand
+import Deck
 import Timer
 import UserInput
-
-data GameState = GameState
-  { _player1 :: Player
-  , _player2 :: Player
-  , _turn :: Int
-  }
-
-makeLenses ''GameState
 
 testGS :: GameState
 testGS = GameState
@@ -117,10 +110,11 @@ evalCR p o = flip eval o $ view p
       let (Sum combo) = gs ^. target' o Self . hand . traverse . filtered (isCombo cid . fst) . to (const $ Sum 1)
       evalCR (k combo) o
 
-cardsOnlyReq :: GameState -> Origin -> Hand -> Hand
-cardsOnlyReq gs o h = hWithReq ^.. traverse . filtered (\x -> x ^. _2) . _1
+cardsOnlyReq :: GameState -> Origin -> Hand -> [(Card, DeckPos, Int)]
+cardsOnlyReq gs o h = h'Ix'Req ^.. traverse . filtered (\x -> x ^. _2) . _1
   where
-    hWithReq = (\c@(x, _) -> (c, runReader (evalCR (x ^. cardReqs) o) gs)) <$> h
+    h'Ix = zip h [0..]
+    h'Ix'Req = (\(c@(x, y), i) -> ((x, y, i), runReader (evalCR (x ^. cardReqs) o) gs)) <$> h'Ix
 
 playCard :: (MonadState GameState m, MonadWriter [String] m)
          => Int -> Origin -> m ()
@@ -165,9 +159,9 @@ actionPhase evalUi player pNo = do
     then
     do
       -- ask for action
-      i1 <- evalUi $ playHand (fst <$> fullHand1) (fst <$> filteredHand1)
+      i1 <- evalUi $ playHand ((\(a,_,b) -> (a,b)) <$> filteredHand1)
       -- pick chosen card
-      let (cardP1, (row1, col1)) = filteredHand1 !! i1
+      let (cardP1, (row1, col1)) = fullHand1 !! i1
       -- reduce player actions
       player . actions %= (\x -> x - 1)
       -- play card
@@ -192,6 +186,7 @@ runTurn (GameData ip1 ip2) = do
   actionPhase (imToEvalUi ip2) player2 2
   player1 %= wardPhase
   player2 %= wardPhase
+  turn %= (+ 1)
 
 runTurn'' :: GameData -> GameState -> IO GameState
 runTurn'' gd gs = do

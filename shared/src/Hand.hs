@@ -15,7 +15,7 @@ type Hand = [(Card, DeckPos)]
 drawCards :: [Card] -> String
 drawCards cs = intercalate "\n" $
   foldr (\c [t, m, b] ->
-  [t ++ "+-+", m ++ "|" ++ drawCard c ++ "|", b ++ "+-+"]
+  [t ++ "+--+", m ++ "|" ++ drawCard c ++ "|", b ++ "+--+"]
   ) ["", "", ""] cs
 
 drawHand :: Hand -> String

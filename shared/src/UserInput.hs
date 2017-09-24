@@ -1,6 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE FlexibleContexts #-}
 
 module UserInput
   where
@@ -8,21 +9,22 @@ module UserInput
 import Data.List
 
 import Control.Monad
+import Control.Monad.State
 import Control.Monad.IO.Class
 import Control.Monad.Operational
 import Control.Lens hiding (view)
 
+import Player
 import Card
 import Hand
 import Strategy
 
 data UserInputOp a where
-  PlayHand :: [Card] -> [Card] -> UserInputOp Int
+  PlayHand :: [(Card, Int)] -> UserInputOp Int
 
-playHand a b = singleton $ PlayHand a b
+playHand a = singleton $ PlayHand a
 
-data InputMode = Cli | Strat | Man
-  deriving (Eq, Show, Ord)
+data InputMode = Cli | Strat | Man (Int -> Int)
 
 data GameData = GameData
   { inputP1 :: InputMode
@@ -33,23 +35,25 @@ makeLenses ''GameData
 
 type UIHandler m = forall a. Program UserInputOp a -> m a
 
-imToEvalUi :: (MonadIO m) => InputMode -> UIHandler m
+imToEvalUi :: (MonadState GameState m, MonadIO m)
+           => InputMode -> UIHandler m
 imToEvalUi Cli = evalUiCli
 imToEvalUi Strat = evalUiStrat
-imToEvalUi Man = undefined
+imToEvalUi (Man f) = evalUiMan f
 
-evalUiCli :: (MonadIO m) => Program UserInputOp a -> m a
+evalUiCli :: (MonadIO m)
+          => Program UserInputOp a -> m a
 evalUiCli = eval . view
   where
     eval :: (MonadIO m) => ProgramView UserInputOp a -> m a
     eval (Return x) = return x
-    eval (PlayHand _ choiceH :>>= k) = do
+    eval (PlayHand choiceH :>>= k) = do
       liftIO $ putStrLn "choose card to play:"
-      liftIO $ putStrLn $ drawCards choiceH
+      liftIO $ putStrLn $ drawCards (fst <$> choiceH)
       let choices = [0..(length choiceH-1)]
-      liftIO $ putStrLn $ " " ++ intercalate "  " (show <$> reverse choices)
+      liftIO $ putStrLn $ " " ++ intercalate "   " (show <$> reverse choices)
       i <- readLnGuarded (`elem` choices)
-      evalUiCli (k i)
+      evalUiCli (k ((snd <$> choiceH) !! i))
 
 readLnGuarded :: (MonadIO m, Read a) => (a -> Bool) -> m a
 readLnGuarded f = do
@@ -60,11 +64,23 @@ readLnGuarded f = do
       liftIO $ putStrLn "invalid choice"
       readLnGuarded f
 
-evalUiStrat :: (MonadIO m) => Program UserInputOp a -> m a
+evalUiStrat :: (MonadIO m)
+            => Program UserInputOp a -> m a
 evalUiStrat = eval . view
   where
     eval :: (MonadIO m) => ProgramView UserInputOp a -> m a
     eval (Return x) = return x
-    eval (PlayHand _ choiceH :>>= k) = do
-      let cardIx = handStrategy choiceH
-      evalUiStrat (k cardIx)
+    eval (PlayHand choiceH :>>= k) = do
+      let i = handStrategy (fst <$> choiceH)
+      evalUiStrat (k ((snd <$> choiceH) !! i))
+
+evalUiMan :: (MonadState GameState m, MonadIO m)
+          => (Int -> Int) -> Program UserInputOp a -> m a
+evalUiMan f = eval . view
+  where
+    eval :: (MonadState GameState m, MonadIO m)
+         => ProgramView UserInputOp a -> m a
+    eval (Return x) = return x
+    eval (PlayHand _ :>>= k) = do
+      t <- use (turn)
+      evalUiMan f (k (f t))

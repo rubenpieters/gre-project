@@ -93,14 +93,9 @@ dmg11Card = Card
       logG "queue 1 dmg timer 2"
       o <- getOrigin
       addCard dmg11Card o Self
-      addNBTimer 2 (do
-        b <- blocked
-        if b
-          then
-            logG "(blocked) dmg 1"
-          else do
-            logG $ "dmg 1 " ++ show (o ^. column)
-            replicateM_ 1 (addCard dmgCard o Opp))
+      blockedEff 2 (do
+        logG $ "dmg 1 " ++ show (o ^. column)
+        replicateM_ 1 (addCard dmgCard o Opp))
   , _cardReqs = return True
   }
 
@@ -145,13 +140,72 @@ cantripTestCard = Card
   , _cardReqs = return True
   }
 
+focus5Card :: Card
+focus5Card = Card
+  { _cardId = 8
+  , _cardEffect = do
+    logG "focus 5 card"
+    o@(Origin col row p) <- getOrigin
+    addCard dmg11Card o Self
+    blockedEff 3 (do
+          logG $ "dmg 7-3 " ++ show (o ^. column)
+          replicateM_ 7 (addCard dmgCard (Origin col F p) Opp)
+          replicateM_ 3 (addCard dmgCard (Origin col B p) Opp)
+      )
+  , _cardReqs = do
+      focus <- focusCards
+      return $ focus >= 5
+  }
+
+addFocus :: Card
+addFocus = Card
+  { _cardId = 9
+  , _cardEffect = do
+      logG "add focus"
+      o <- getOrigin
+      replicateM_ 3 $ addCard focusCard o Self
+  , _cardReqs = return True
+  }
+
+focus3Card :: Card
+focus3Card = Card
+  { _cardId = 10
+  , _cardEffect = do
+    logG "focus 5 card"
+    o@(Origin col row p) <- getOrigin
+    addCard dmg11Card o Self
+    blockedEff 3 (do
+          logG $ "dmg 5-1 " ++ show (o ^. column)
+          replicateM_ 5 (addCard dmgCard (Origin col F p) Opp)
+          replicateM_ 1 (addCard dmgCard (Origin col B p) Opp)
+      )
+  , _cardReqs = do
+      focus <- focusCards
+      return $ focus >= 3
+  }
+
+
 isFocus :: Card -> Bool
 isFocus c = c ^. cardId == 2
 
 isCombo :: CardId -> Card -> Bool
 isCombo cid c = c ^. cardId == cid
 
+blockedEff :: Int -> CardEffect -> CardEffect
+blockedEff t ce = do
+  o <- getOrigin
+  addCard dmg11Card o Self
+  addNBTimer t (do
+    b <- blocked
+    if b
+      then
+        logG "(blocked) dmg"
+      else
+        ce
+     )
+
 drawCard :: Card -> String
-drawCard c | c ^. cardId == 1 = "D"
-drawCard c | c ^. cardId == 2 = "F"
-drawCard c = show $ c ^. cardId
+drawCard c | c ^. cardId == 1 = " D"
+drawCard c | c ^. cardId == 2 = " F"
+drawCard c | c ^. cardId . to (length . show) == 1 = " " ++ show (c ^. cardId)
+drawCard c | c ^. cardId . to (length . show) == 2 = show (c ^. cardId)

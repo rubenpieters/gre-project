@@ -63,12 +63,12 @@ originToPile (Origin R B _) = deck . backR
 type HandIx = Int
 
 testDeck = Deck
-  { _frontL = [comboTestCard]
-  , _frontM = [comboTestCard]
-  , _frontR = [cantripTestCard]
-  , _backL = [dmg11Card]
-  , _backM = [dmg11Card]
-  , _backR = [dmg11Card]
+  { _frontL = [focus3Card,blockCard,blockCard]
+  , _frontM = [blockCard,focus3Card,blockCard]
+  , _frontR = [blockCard,blockCard,focus3Card]
+  , _backL = [addFocus]
+  , _backM = [addFocus]
+  , _backR = [addFocus]
   }
 
 testPlayer' = Player
@@ -134,3 +134,13 @@ wardPhase p = p & hand .~ []
 ht :: [a] -> (Maybe a, [a])
 ht [] = (Nothing, [])
 ht l = (Just $ head l, tail l)
+
+
+data GameState = GameState
+  { _player1 :: Player
+  , _player2 :: Player
+  , _turn :: Int
+  }
+
+makeLenses ''GameState
+
