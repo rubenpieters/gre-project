@@ -52,13 +52,16 @@ colToFront L = deck . frontL
 colToFront M = deck . frontM
 colToFront R = deck . frontR
 
+posToPile :: DeckPos -> Lens' Player [Card]
+posToPile (F, L) = deck . frontL
+posToPile (F, M) = deck . frontM
+posToPile (F, R) = deck . frontR
+posToPile (B, L) = deck . backL
+posToPile (B, M) = deck . backM
+posToPile (B, R) = deck . backR
+
 originToPile :: Origin -> Lens' Player [Card]
-originToPile (Origin L F _) = deck . frontL
-originToPile (Origin M F _) = deck . frontM
-originToPile (Origin R F _) = deck . frontR
-originToPile (Origin L B _) = deck . backL
-originToPile (Origin M B _) = deck . backM
-originToPile (Origin R B _) = deck . backR
+originToPile (Origin c r _) = posToPile (r,c)
 
 type HandIx = Int
 
@@ -82,7 +85,7 @@ testPlayer' = Player
 }
 
 dummyDeck = Deck
-  { _frontL = [blockCard]
+  { _frontL = [dmg11Card]
   , _frontM = [blockCard]
   , _frontR = [blockCard]
   , _backL = [blockCard]
@@ -101,6 +104,13 @@ dummyPlayer = Player
 
 initPhase :: Player -> Player
 initPhase p = p & actions .~ 1
+
+drawPos :: DeckPos -> Player -> Player
+drawPos pos p = case mc of
+  Just c -> p' & hand %~ ((c, pos) :)
+  Nothing -> p
+  where
+    (mc, p') = p & posToPile pos %%~ ht
 
 drawPhase :: Player -> Player
 drawPhase p = p6 & hand %~ (l' ++)

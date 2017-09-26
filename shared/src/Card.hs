@@ -40,6 +40,7 @@ data CardEffectOp a where
   GetOrigin :: CardEffectOp Origin
   Blocked :: CardEffectOp Bool
   Combo :: Int -> CardEffectOp ()
+  Draw :: Origin -> CardEffectOp ()
 
 addDP a = singleton $ AddDP a
 addAP a = singleton $ AddAP a
@@ -51,6 +52,7 @@ addNBTimer a b = singleton $ AddTimer a False b
 getOrigin = singleton GetOrigin
 blocked = singleton Blocked
 combo a = singleton $ Combo a
+draw a = singleton $ Draw a
 
 type CardReq = Program CardReqOp Bool
 
@@ -75,6 +77,8 @@ dmgCard = Card
   , _cardEffect = do
       logG "activate dmg card"
       addDP 1
+      o <- getOrigin
+      draw o
   , _cardReqs = return True
   }
 
@@ -184,6 +188,9 @@ focus3Card = Card
       return $ focus >= 3
   }
 
+
+isDamage :: Card -> Bool
+isDamage c = c ^. cardId == 1
 
 isFocus :: Card -> Bool
 isFocus c = c ^. cardId == 2

@@ -21,8 +21,10 @@ import Strategy
 
 data UserInputOp a where
   PlayHand :: [(Card, Int)] -> UserInputOp Int
+  ClearDmg :: UserInputOp Bool
 
 playHand a = singleton $ PlayHand a
+clearDmg = singleton ClearDmg
 
 data InputMode = Cli | Strat | Man (Int -> Int)
 
@@ -54,6 +56,10 @@ evalUiCli = eval . view
       liftIO $ putStrLn $ " " ++ intercalate "   " (show <$> reverse choices)
       i <- readLnGuarded (`elem` choices)
       evalUiCli (k ((snd <$> choiceH) !! i))
+    eval (ClearDmg :>>= k) = do
+      liftIO $ putStrLn "clear damage?"
+      b <- liftIO readLn
+      evalUiCli (k b)
 
 readLnGuarded :: (MonadIO m, Read a) => (a -> Bool) -> m a
 readLnGuarded f = do
@@ -73,6 +79,8 @@ evalUiStrat = eval . view
     eval (PlayHand choiceH :>>= k) = do
       let i = handStrategy (fst <$> choiceH)
       evalUiStrat (k ((snd <$> choiceH) !! i))
+    eval (ClearDmg :>>= k) =
+      evalUiStrat (k True)
 
 evalUiMan :: (MonadState GameState m, MonadIO m)
           => (Int -> Int) -> Program UserInputOp a -> m a
@@ -82,5 +90,5 @@ evalUiMan f = eval . view
          => ProgramView UserInputOp a -> m a
     eval (Return x) = return x
     eval (PlayHand _ :>>= k) = do
-      t <- use (turn)
+      t <- use turn
       evalUiMan f (k (f t))

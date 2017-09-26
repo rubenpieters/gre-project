@@ -46,15 +46,16 @@ target _ _ = error "invalid turn value"
 target' :: Origin -> Target -> Lens' GameState Player
 target' o = target (o ^. player)
 
-evalCE :: (MonadState GameState m, MonadWriter [String] m)
+evalCE :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
        => Program CardEffectOp a -> Origin -> m a
 evalCE p o = flip eval o $ view p
   where
-    eval :: (MonadState GameState m, MonadWriter [String] m)
+    eval :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
          => ProgramView CardEffectOp a -> Origin -> m a
     eval (Return x) o = return x
     eval (Log s :>>= k) o = do
-      tell [s]
+--      tell [s]
+      liftIO $ putStrLn s
       evalCE (k ()) o
     eval (AddDP x :>>= k) o = do
       target' o Self . dps %= (x +)
@@ -89,6 +90,9 @@ evalCE p o = flip eval o $ view p
       let comboCardsIxs = cardsIxs ^.. traverse . filtered (isCombo cid . fst . snd) . _1
       mapM_ (`playCard` o) comboCardsIxs
       evalCE (k ()) o
+    eval (Draw o@(Origin c r _) :>>= k) _ = do
+      target' o Self %= drawPos (r,c)
+      evalCE (k ()) o
 
 deleteNth i xs = take i xs ++ drop (succ i) xs
 
@@ -110,13 +114,15 @@ evalCR p o = flip eval o $ view p
       let (Sum combo) = gs ^. target' o Self . hand . traverse . filtered (isCombo cid . fst) . to (const $ Sum 1)
       evalCR (k combo) o
 
-cardsOnlyReq :: GameState -> Origin -> Hand -> [(Card, DeckPos, Int)]
-cardsOnlyReq gs o h = h'Ix'Req ^.. traverse . filtered (\x -> x ^. _2) . _1
+cardsOnly :: GameState -> Origin -> Hand -> (Card -> Bool) -> [(Card, DeckPos, Int)]
+cardsOnly gs o h f = h'Ix'Req ^.. traverse . filtered (\x -> x ^. _2) . _1
   where
     h'Ix = zip h [0..]
-    h'Ix'Req = (\(c@(x, y), i) -> ((x, y, i), runReader (evalCR (x ^. cardReqs) o) gs)) <$> h'Ix
+    h'Ix'Req = (\(c@(x, y), i) -> ((x, y, i), f x)) <$> h'Ix
 
-playCard :: (MonadState GameState m, MonadWriter [String] m)
+cardSatReq gs o x = runReader (evalCR (x ^. cardReqs) o) gs
+
+playCard :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
          => Int -> Origin -> m ()
 playCard i o = do
   playedCard <- (target' o Self . hand) %%= takeNth i
@@ -125,12 +131,12 @@ playCard i o = do
     (\(c, _) -> evalCE (c ^. cardEffect) o)
     playedCard
 
-execEffs :: (MonadState GameState m, MonadWriter [String] m)
+execEffs :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
          => [CardEffect] -> [Origin] -> m ()
 execEffs [] _ = return ()
 execEffs (c:cs) (o:os) = evalCE c o >> execEffs cs os
 
-tickPhase :: (MonadState GameState m, MonadWriter [String] m)
+tickPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
           => m ()
 tickPhase = do
   ces1 <- (player1 . timersL) %%= newTimersAndEffs
@@ -149,12 +155,34 @@ tickPhase = do
 newTimersAndEffs :: [Timer] -> ([(CardEffect, Origin)], [Timer])
 newTimersAndEffs ts = partitionEithers $ tick <$> ts
 
+damagePhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+            => UIHandler m -> Lens' GameState Player -> Int -> m ()
+damagePhase evalUi player pNo = do
+  gs <- get
+  hand <- use (player . hand)
+  when (any (^. _1 . to isDamage) hand)
+    (do
+      clr <- evalUi clearDmg
+      when clr
+        (do
+          let dCards = cardsOnly gs (Origin undefined undefined pNo) hand isDamage ^.. traverse . to _23
+          mapM_ (uncurry $ flip playCard) dCards
+          return ()
+        )
+      damagePhase evalUi player pNo
+    )
+  where
+    bti True = 1
+    bti False = 0
+    _23 (_,(c,r),b) = (Origin r c pNo,b)
+
 actionPhase :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
             => UIHandler m -> Lens' GameState Player -> Int -> m ()
 actionPhase evalUi player pNo = do
   gs <- get
   fullHand1 <- use (player . hand)
-  let filteredHand1 = cardsOnlyReq gs (Origin undefined undefined 1) fullHand1
+  let filterO = Origin undefined undefined pNo
+  let filteredHand1 = cardsOnly gs filterO fullHand1 (cardSatReq gs filterO)
   if (not (null filteredHand1))
     then
     do
@@ -182,6 +210,8 @@ runTurn (GameData ip1 ip2) = do
   tickPhase
   player1 %= drawPhase
   player2 %= drawPhase
+  damagePhase (imToEvalUi ip1) player1 1
+  damagePhase (imToEvalUi ip2) player2 2
   actionPhase (imToEvalUi ip1) player1 1
   actionPhase (imToEvalUi ip2) player2 2
   player1 %= wardPhase
