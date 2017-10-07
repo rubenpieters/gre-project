@@ -48,51 +48,69 @@ target' o = target (o ^. player)
 
 evalCE :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
        => Program CardEffectOp a -> Origin -> m a
-evalCE p o = flip eval o $ view p
+evalCE p o = flip evalCE' o $ view p
+
+evalCE' :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+        => ProgramView CardEffectOp a -> Origin -> m a
+evalCE' (Return x) o = return x
+evalCE' (Log s :>>= k) o = do
+  liftIO $ putStrLn s
+  evalCE (k ()) o
+evalCE' (AddDP x :>>= k) o = do
+  target' o Self . dps %= (x +)
+  evalCE (k ()) o
+evalCE' (AddAP x :>>= k) o = do
+  target' o Self . actions %= (x +)
+  evalCE (k ()) o
+evalCE' (AddCard c ogn tgt :>>= k) o = do
+  target' ogn tgt . originToPile ogn %= (++ [c])
+  evalCE (k ()) o
+evalCE' (AddTimer cd b p' :>>= k) o = do
+  fb <- use (target' o Self . colToTimer (o ^. column) . to firstBlocking)
+  if b && isJust fb && (fromJust fb ^. _2 . timerOrigin == o)
+    then -- merge blocking timers
+      let (i, Timer cd2 _ _ p2) = fromJust fb
+      in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) True o (p' >> p2)
+    else do -- add timer
+      target' o Self . colToTimer (o ^. column) %= (Timer cd b o p':)
+  evalCE (k ()) o
+evalCE' (GetOrigin :>>= k) o = evalCE (k o) o
+evalCE' (Blocked :>>= k) o = do
+  fb <- use (target' o Opp . colToTimer (o ^. column) . to firstBlocking)
+  maybe
+     (return ())
+     (\(i, _) -> target' o Opp . colToTimer (o ^. column) %= deleteNth i)
+     fb
+  evalCE (k (isJust fb)) o
+evalCE' (Combo cid :>>= k) o = do
+  evalCombo o cid
+  evalCE (k ()) o
+evalCE' (Draw o@(Origin c r _) :>>= k) _ = do
+  target' o Self %= drawPos (r,c)
+  evalCE (k ()) o
+
+evalCENoCombo :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+       => Program CardEffectOp a -> Origin -> m a
+evalCENoCombo p o = flip eval o $ view p
   where
     eval :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
          => ProgramView CardEffectOp a -> Origin -> m a
-    eval (Return x) o = return x
-    eval (Log s :>>= k) o = do
---      tell [s]
-      liftIO $ putStrLn s
-      evalCE (k ()) o
-    eval (AddDP x :>>= k) o = do
-      target' o Self . dps %= (x +)
-      evalCE (k ()) o
-    eval (AddAP x :>>= k) o = do
-      target' o Self . actions %= (x +)
-      evalCE (k ()) o
-    eval (AddCard c ogn tgt :>>= k) o = do
-      target' ogn tgt . originToPile ogn %= (++ [c])
-      evalCE (k ()) o
-    eval (AddTimer cd b p' :>>= k) o = do
-      fb <- use (target' o Self . colToTimer (o ^. column) . to firstBlocking)
-      if b && isJust fb && (fromJust fb ^. _2 . timerOrigin == o)
-        then -- merge blocking timers
-          let (i, Timer cd2 _ _ p2) = fromJust fb
-          in target' o Self . colToTimer (o ^. column) . ix i .= Timer (max cd cd2) True o (p' >> p2)
-        else do -- add timer
-          target' o Self . colToTimer (o ^. column) %= (Timer cd b o p':)
-      evalCE (k ()) o
-    eval (GetOrigin :>>= k) o = evalCE (k o) o
-    eval (Blocked :>>= k) o = do
-      fb <- use (target' o Opp . colToTimer (o ^. column) . to firstBlocking)
-      maybe
-        (return ())
-        (\(i, _) -> target' o Opp . colToTimer (o ^. column) %= deleteNth i)
-        fb
-      evalCE (k (isJust fb)) o
-    eval (Combo cid :>>= k) o = do
-      gs <- get
-      let cards = gs ^.. target' o Self . hand . traverse
-      let cardsIxs = zip [0..] cards
-      let comboCardsIxs = cardsIxs ^.. traverse . filtered (isCombo cid . fst . snd) . _1
-      mapM_ (`playCard` o) comboCardsIxs
-      evalCE (k ()) o
-    eval (Draw o@(Origin c r _) :>>= k) _ = do
-      target' o Self %= drawPos (r,c)
-      evalCE (k ()) o
+    eval (Combo cid :>>= k) o = evalCENoCombo (k ()) o
+    eval p o = evalCE' p o
+
+-- TODO: add counter to limit steps?
+evalCombo :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
+          => Origin -> Int -> m ()
+evalCombo o cid = do
+  gs <- get
+  let cards = gs ^.. target' o Self . hand . traverse
+  let cardsIxs = zip [0..] cards
+  let comboCardsIxs = cardsIxs ^.. traverse . filtered (isCombo cid . fst . snd)
+  case comboCardsIxs of
+    [] -> return ()
+    ((i, (c, (row, col))):cs) -> do
+      playCard i (Origin col row (o^.player)) evalCENoCombo
+      evalCombo o cid
 
 deleteNth i xs = take i xs ++ drop (succ i) xs
 
@@ -123,12 +141,12 @@ cardsOnly gs o h f = h'Ix'Req ^.. traverse . filtered (\x -> x ^. _2) . _1
 cardSatReq gs o x = runReader (evalCR (x ^. cardReqs) o) gs
 
 playCard :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
-         => Int -> Origin -> m ()
-playCard i o = do
+         => Int -> Origin -> (forall a. Program CardEffectOp a -> Origin -> m a) -> m ()
+playCard i o eval = do
   playedCard <- (target' o Self . hand) %%= takeNth i
   maybe
     (return ())
-    (\(c, _) -> evalCE (c ^. cardEffect) o)
+    (\(c, _) -> eval (c ^. cardEffect) o)
     playedCard
 
 execEffs :: (MonadState GameState m, MonadWriter [String] m, MonadIO m)
@@ -166,7 +184,7 @@ damagePhase evalUi player pNo = do
       when clr
         (do
           let dCards = cardsOnly gs (Origin undefined undefined pNo) hand isDamage ^.. traverse . to _23
-          mapM_ (uncurry $ flip playCard) dCards
+          mapM_ (\(o,i) -> playCard i o evalCE) dCards
           return ()
         )
       damagePhase evalUi player pNo
@@ -193,7 +211,7 @@ actionPhase evalUi player pNo = do
       -- reduce player actions
       player . actions %= (\x -> x - 1)
       -- play card
-      playCard i1 (Origin col1 row1 pNo)
+      playCard i1 (Origin col1 row1 pNo) evalCE
       -- if any actions left, redo action phase
       playerActions <- use (player . actions)
       if playerActions <= 0

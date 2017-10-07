@@ -66,12 +66,12 @@ originToPile (Origin c r _) = posToPile (r,c)
 type HandIx = Int
 
 testDeck = Deck
-  { _frontL = [focus3Card,blockCard,blockCard]
-  , _frontM = [blockCard,focus3Card,blockCard]
-  , _frontR = [blockCard,blockCard,focus3Card]
-  , _backL = [addFocus]
-  , _backM = [addFocus]
-  , _backR = [addFocus]
+  { _frontL = [block2Card]
+  , _frontM = [block2Card]
+  , _frontR = [block2Card]
+  , _backL = [incCard 1]
+  , _backM = [incCard 1]
+  , _backR = [incCard 1]
   }
 
 testPlayer' = Player

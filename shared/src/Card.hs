@@ -175,19 +175,46 @@ focus3Card :: Card
 focus3Card = Card
   { _cardId = 10
   , _cardEffect = do
-    logG "focus 5 card"
-    o@(Origin col row p) <- getOrigin
-    addCard dmg11Card o Self
-    blockedEff 3 (do
-          logG $ "dmg 5-1 " ++ show (o ^. column)
-          replicateM_ 5 (addCard dmgCard (Origin col F p) Opp)
-          replicateM_ 1 (addCard dmgCard (Origin col B p) Opp)
-      )
+      logG "focus 5 card"
+      o@(Origin col row p) <- getOrigin
+      addCard dmg11Card o Self
+      blockedEff 3 (do
+        logG $ "dmg 5-1 " ++ show (o ^. column)
+        replicateM_ 5 (addCard dmgCard (Origin col F p) Opp)
+        replicateM_ 1 (addCard dmgCard (Origin col B p) Opp)
+        )
   , _cardReqs = do
       focus <- focusCards
       return $ focus >= 3
   }
 
+block2Card :: Card
+block2Card = Card
+  { _cardId = 11
+  , _cardEffect = do
+      logG "block2Card"
+      o@(Origin col row p) <- getOrigin
+      addCard block2Card o Self
+      addBTimer 2 $ return ()
+      combo 11
+  , _cardReqs = do
+      combo <- comboCards 11
+      return $ combo >= 2
+  }
+
+incCard :: Int -> Card
+incCard n = Card
+  { _cardId = 12
+  , _cardEffect = do
+      logG $ "inc card " ++ show n
+      o@(Origin col row p) <- getOrigin
+      addCard (incCard (n+1)) o Self
+      blockedEff 3 (do
+        logG $ "dmg " ++ show n ++ " " ++ show (o ^. column)
+        replicateM_ n (addCard dmgCard (Origin col F p) Opp)
+        )
+  , _cardReqs = return True
+  }
 
 isDamage :: Card -> Bool
 isDamage c = c ^. cardId == 1
